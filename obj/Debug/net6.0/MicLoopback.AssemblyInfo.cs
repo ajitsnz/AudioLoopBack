@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("MicLoopback")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+9bceda39a9300cc508db4215132b4a6702fcdc96")]
 [assembly: System.Reflection.AssemblyProductAttribute("MicLoopback")]
 [assembly: System.Reflection.AssemblyTitleAttribute("MicLoopback")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
