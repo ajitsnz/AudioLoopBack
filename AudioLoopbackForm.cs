@@ -12,8 +12,10 @@ public class AudioLoopbackForm : Form
 {
     private Button btnMicLoop;
     private Button btnAudioDup;
+        private Button btnSpeakerLoopback;
     private Button btnStopAll;
     private Button btnExit;
+    private CheckBox chkDarkTheme;
     private CheckBox chkRunStartup;
     private ComboBox cmbMic;
     private ComboBox cmbSpeaker;
@@ -21,6 +23,8 @@ public class AudioLoopbackForm : Form
     private Label lblSpeaker;
     private Thread? micThread;
     private Thread? dupThread;
+    private CancellationTokenSource? micCts;
+    private CancellationTokenSource? dupCts;
     private bool micRunning = false;
     private bool dupRunning = false;
     private NotifyIcon trayIcon;
@@ -34,16 +38,20 @@ public class AudioLoopbackForm : Form
 
     public AudioLoopbackForm()
     {
-        this.Text = "Audio Loopback & Duplicator";
+        chkDarkTheme = new CheckBox { Text = "Dark", Left = 250, Top = 155, Width = 70, Height = 24, Checked = true, Enabled = false, Visible = false };
+        this.Controls.Add(chkDarkTheme);
+    {
+    // Removed invalid field declaration from constructor
+    this.Text = "Audio Device Router";
         this.Width = 400;
         this.Height = 200;
         this.FormBorderStyle = FormBorderStyle.None; // borderless, non-movable
         this.DoubleBuffered = true;
     this.ShowInTaskbar = false; // behave like a tray flyout
         this.StartPosition = FormStartPosition.Manual; // we'll position it near tray
-        this.BackColor = SystemColors.Control; // vintage light theme
+    this.BackColor = Color.FromArgb(245, 246, 248); // muted light gray (not bright white)
         this.Padding = new Padding(12);
-    this.TopMost = true; // stay on top by default
+    this.TopMost = true; // stay on top (no toggle)
 
         // Tray icon and menu
         trayMenu = new ContextMenuStrip();
@@ -72,7 +80,7 @@ public class AudioLoopbackForm : Form
         this.Resize += AudioLoopbackForm_Resize;
         this.FormClosing += AudioLoopbackForm_FormClosing;
         this.Deactivate += (s, e) => { if (this.Visible) BeginFadeOutAndHide(); }; // hide when clicking away
-        this.Load += (s, e) => { ApplyRoundedCorners(0); StyleControls(); BeginFadeInAndShowNearTray(); };
+    this.Load += (s, e) => { ApplyRoundedCorners(0); ApplyTheme(false); BeginFadeInAndShowNearTray(); };
 
         // Fade timer setup
         fadeTimer.Interval = 20; // ~50fps
@@ -106,30 +114,40 @@ public class AudioLoopbackForm : Form
         };
 
         // Controls
-        lblMic = new Label { Text = "Microphone:", Left = 16, Top = 22, Width = 90 };
-        cmbMic = new ComboBox { Left = 110, Top = 18, Width = 250, DropDownStyle = ComboBoxStyle.DropDownList };
-        lblSpeaker = new Label { Text = "Speaker:", Left = 16, Top = 62, Width = 90 };
-        cmbSpeaker = new ComboBox { Left = 110, Top = 58, Width = 250, DropDownStyle = ComboBoxStyle.DropDownList };
-        btnMicLoop = new Button { Text = "Start Mic Loopback", Left = 16, Top = 105, Width = 150, Height = 28 };
-        btnAudioDup = new Button { Text = "Start Audio Duplicate", Left = 174, Top = 105, Width = 160, Height = 28 };
-    btnStopAll = new Button { Text = "Stop All", Left = 338, Top = 105, Width = 46, Height = 28 };
-    chkRunStartup = new CheckBox { Text = "Run at startup", Left = 90, Top = 145, Width = 120, Height = 24, Checked = IsStartupEnabled() };
-        btnExit = new Button { Text = "Exit", Left = 16, Top = 145, Width = 60, Height = 24 };
+    lblMic = new Label { Text = "Microphone:", Left = 16, Top = 22, Width = 90 };
+    cmbMic = new ComboBox { Left = 110, Top = 18, Width = 250, DropDownStyle = ComboBoxStyle.DropDownList };
+    lblSpeaker = new Label { Text = "Speaker:", Left = 16, Top = 62, Width = 90 };
+    cmbSpeaker = new ComboBox { Left = 110, Top = 58, Width = 250, DropDownStyle = ComboBoxStyle.DropDownList };
+    btnMicLoop = new Button { Text = "Start Mic", Left = 16, Top = 105, Width = 150, Height = 28 };
+    btnSpeakerLoopback = new Button { Text = "Start Speaker", Left = 174, Top = 105, Width = 160, Height = 28 };
+    btnStopAll = new Button { Text = "Stop", Left = 16, Top = 150, Width = 70, Height = 28 };
+    chkRunStartup = new CheckBox { Text = "Run at startup", Left = 100, Top = 155, Width = 140, Height = 24, Checked = IsStartupEnabled() };
 
-        btnMicLoop.Click += BtnMicLoop_Click;
-        btnAudioDup.Click += BtnAudioDup_Click;
-        btnStopAll.Click += BtnStopAll_Click;
-    btnExit.Click += (s, e) => { allowExit = true; trayIcon.Visible = false; Application.Exit(); };
+    chkDarkTheme = new CheckBox { Text = "Dark Theme", Left = 250, Top = 150, Width = 100, Height = 24, Checked = false, Enabled = true, Visible = true };
+    // Set label colors to black for visibility
+    lblMic.ForeColor = Color.Black;
+    lblSpeaker.ForeColor = Color.Black;
+    // Align dark theme checkbox with other controls
+    chkDarkTheme.Top = btnStopAll.Top;
+    chkDarkTheme.Left = btnStopAll.Right + 30; // add more space to avoid overlap
+
+    btnMicLoop.Click += BtnMicLoop_Click;
+    btnSpeakerLoopback.Click += BtnSpeakerLoopback_Click;
+    btnStopAll.Click += BtnStopAll_Click;
     chkRunStartup.CheckedChanged += (s, e) => { SetRunAtStartup(chkRunStartup.Checked); };
-        this.Controls.Add(lblMic);
-        this.Controls.Add(cmbMic);
-        this.Controls.Add(lblSpeaker);
-        this.Controls.Add(cmbSpeaker);
-        this.Controls.Add(btnMicLoop);
-        this.Controls.Add(btnAudioDup);
-        this.Controls.Add(btnStopAll);
-        this.Controls.Add(btnExit);
-        this.Controls.Add(chkRunStartup);
+    this.Controls.Add(cmbMic);
+    this.Controls.Add(lblMic);
+    this.Controls.Add(lblSpeaker);
+    this.Controls.Add(cmbSpeaker);
+    this.Controls.Add(btnMicLoop);
+    this.Controls.Add(btnSpeakerLoopback);
+    this.Controls.Add(btnStopAll);
+    this.Controls.Add(chkRunStartup);
+    this.Controls.Add(chkDarkTheme);
+    chkDarkTheme.BringToFront();
+    chkDarkTheme.CheckedChanged += (s, e) => { ApplyTheme(chkDarkTheme.Checked); };
+    this.Controls.Add(chkDarkTheme);
+    ApplyTheme(true);
 
         // Populate device lists
         for (int i = 0; i < WaveInEvent.DeviceCount; i++)
@@ -142,23 +160,47 @@ public class AudioLoopbackForm : Form
         var enumerator = new MMDeviceEnumerator();
         var devices = enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active);
         for (int i = 0; i < devices.Count; i++)
+        {
             cmbSpeaker.Items.Add($"{i}: {devices[i].FriendlyName}");
+        }
         if (cmbSpeaker.Items.Count > 0) cmbSpeaker.SelectedIndex = 0;
     }
-
-    private void StyleControls()
+    }
+    // Theming methods
+    private void ApplyTheme(bool dark)
     {
-        // Use classic/vintage system palette
-        this.Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 9f, FontStyle.Regular);
-        var text = SystemColors.ControlText;
-        var subtle = SystemColors.ControlText;
-        var fieldBg = SystemColors.Window;
+    if (dark)
+    {
+        var text = Color.FromArgb(220, 220, 220);
+        var subtle = Color.FromArgb(180, 180, 180);
+        var fieldBg = Color.FromArgb(40, 40, 45);
+        var back = Color.FromArgb(28, 28, 34);
+        var buttonBg = Color.FromArgb(50, 50, 60);
+        var buttonText = Color.FromArgb(220, 220, 220);
+        StyleControls(text, subtle, fieldBg, back, buttonBg, buttonText);
+    }
+    else
+    {
+        var text = Color.Black;
+        var subtle = Color.DarkGray;
+        var fieldBg = Color.White;
+        var back = Color.FromArgb(245, 246, 248);
+        var buttonBg = Color.LightGray;
+        var buttonText = Color.Black;
+        StyleControls(text, subtle, fieldBg, back, buttonBg, buttonText);
+    }
+    }
 
+    private void StyleControls(Color text, Color subtle, Color fieldBg, Color back, Color buttonBg, Color buttonText)
+    {
+        this.Font = new Font(SystemFonts.MessageBoxFont?.FontFamily ?? FontFamily.GenericSansSerif, 9f, FontStyle.Regular);
+        this.BackColor = back;
         foreach (Control c in this.Controls)
         {
             if (c is Label l)
             {
                 l.ForeColor = subtle;
+                l.BackColor = back;
             }
             else if (c is ComboBox cb)
             {
@@ -168,13 +210,19 @@ public class AudioLoopbackForm : Form
             }
             else if (c is Button b)
             {
-                b.FlatStyle = FlatStyle.Standard;
-                b.UseVisualStyleBackColor = true;
-                b.ForeColor = SystemColors.ControlText;
+                b.FlatStyle = FlatStyle.System;
+                b.BackColor = buttonBg;
+                b.ForeColor = buttonText;
+            }
+            else if (c is CheckBox ch)
+            {
+                ch.ForeColor = text;
+                ch.BackColor = back;
             }
         }
-        // Standard buttons will render with classic raised look using system colors
     }
+
+    // Removed duplicate StyleControls method outside class
 
     private void ApplyRoundedCorners(int radius)
     {
@@ -204,11 +252,11 @@ public class AudioLoopbackForm : Form
         base.OnPaint(e);
         var g = e.Graphics;
     g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-    using var brush = new SolidBrush(SystemColors.Control);
+    using var brush = new SolidBrush(this.BackColor);
     g.FillRectangle(brush, this.ClientRectangle);
     // Draw clear 1px border around the window
     var outer = new Rectangle(0, 0, this.Width - 1, this.Height - 1);
-    ControlPaint.DrawBorder(g, outer, SystemColors.ActiveBorder, ButtonBorderStyle.Solid);
+    ControlPaint.DrawBorder(g, outer, Color.FromArgb(210, 213, 218), ButtonBorderStyle.Solid);
     }
 
     protected override void OnResize(EventArgs e)
@@ -405,14 +453,22 @@ public class AudioLoopbackForm : Form
         if (micRunning)
         {
             micRunning = false;
-            btnMicLoop.Text = "Start Mic Loopback";
-            micThread?.Interrupt();
+            btnMicLoop.Text = "Start Mic";
+            try { micCts?.Cancel(); } catch { }
+            try { micThread?.Join(500); } catch { }
+            micCts?.Dispose();
+            micCts = null;
+            micThread = null;
         }
         if (dupRunning)
         {
             dupRunning = false;
-            btnAudioDup.Text = "Start Audio Duplicate";
-            dupThread?.Interrupt();
+            btnSpeakerLoopback.Text = "Start Speaker";
+            try { dupCts?.Cancel(); } catch { }
+            try { dupThread?.Join(500); } catch { }
+            dupCts?.Dispose();
+            dupCts = null;
+            dupThread = null;
         }
     }
 
@@ -421,34 +477,48 @@ public class AudioLoopbackForm : Form
         if (!micRunning)
         {
             micRunning = true;
-            btnMicLoop.Text = "Stop Mic Loopback";
+            btnMicLoop.Text = "Stop Mic";
             int micIndex = cmbMic.SelectedIndex;
-            micThread = new Thread(() => MicLoopback.LoopMicrophone(micIndex));
+            micCts?.Cancel();
+            micCts?.Dispose();
+            micCts = new CancellationTokenSource();
+            micThread = new Thread(() => MicLoopback.LoopMicrophone(micIndex, micCts.Token)) { IsBackground = true };
             micThread.Start();
         }
         else
         {
             micRunning = false;
-            btnMicLoop.Text = "Start Mic Loopback";
-            micThread?.Interrupt();
+            btnMicLoop.Text = "Start Mic";
+            try { micCts?.Cancel(); } catch { }
+            try { micThread?.Join(500); } catch { }
+            micCts?.Dispose();
+            micCts = null;
+            micThread = null;
         }
     }
 
-    private void BtnAudioDup_Click(object? sender, EventArgs e)
+    private void BtnSpeakerLoopback_Click(object? sender, EventArgs e)
     {
         if (!dupRunning)
         {
             dupRunning = true;
-            btnAudioDup.Text = "Stop Audio Duplicate";
+            btnSpeakerLoopback.Text = "Stop Speaker";
             int speakerIndex = cmbSpeaker.SelectedIndex;
-            dupThread = new Thread(() => MicLoopback.DuplicateAudio(speakerIndex));
+            dupCts?.Cancel();
+            dupCts?.Dispose();
+            dupCts = new CancellationTokenSource();
+            dupThread = new Thread(() => MicLoopback.DuplicateAudio(speakerIndex, dupCts.Token)) { IsBackground = true };
             dupThread.Start();
         }
         else
         {
             dupRunning = false;
-            btnAudioDup.Text = "Start Audio Duplicate";
-            dupThread?.Interrupt();
+            btnSpeakerLoopback.Text = "Start Speaker";
+            try { dupCts?.Cancel(); } catch { }
+            try { dupThread?.Join(500); } catch { }
+            dupCts?.Dispose();
+            dupCts = null;
+            dupThread = null;
         }
     }
 }
