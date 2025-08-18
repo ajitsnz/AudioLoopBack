@@ -1,19 +1,10 @@
 using System;
 using NAudio.Wave;
 
-class Program
+class MicLoopback
 {
-    static void Main(string[] args)
-    {
-        var micThread = new System.Threading.Thread(LoopMicrophone);
-        var dupThread = new System.Threading.Thread(DuplicateAudio);
-        micThread.Start();
-        dupThread.Start();
-        micThread.Join();
-        dupThread.Join();
-    }
 
-    static void LoopMicrophone()
+    public static void LoopMicrophone(int defaultInputDevice = 0, System.Threading.CancellationToken? cancelToken = null)
     {
         Console.WriteLine("Microphone Loopback: Capture from one mic and play to another.");
         // List input devices
@@ -24,8 +15,11 @@ class Program
             Console.WriteLine($"{i}: {deviceInfo.ProductName}");
         }
         // Prompt user for input device selection
-        Console.Write("Select input device (mic1) index: ");
-        int inputDevice = int.Parse(Console.ReadLine());
+
+    //Console.Write($"Select input device (mic1) index [default: {defaultInputDevice}]: ");
+    //string? input = Console.ReadLine();
+    int inputDevice = defaultInputDevice;
+    if (!string.IsNullOrWhiteSpace(inputDevice.ToString())) int.TryParse(inputDevice.ToString(), out inputDevice);
 
         // Set up audio capture and playback (default output device)
         var waveIn = new NAudio.Wave.WaveInEvent { DeviceNumber = inputDevice, WaveFormat = new NAudio.Wave.WaveFormat(44100, 1) };
@@ -41,13 +35,22 @@ class Program
         waveOut.Play();
         waveIn.StartRecording();
 
-        Console.WriteLine("Loopback started. Press Enter to exit.");
-        Console.ReadLine();
+        Console.WriteLine("Loopback started. Press Enter to exit or stop from UI.");
+        try
+        {
+            while (cancelToken == null || !cancelToken.Value.IsCancellationRequested)
+            {
+                if (Console.KeyAvailable && Console.ReadKey(true).Key == ConsoleKey.Enter)
+                    break;
+                System.Threading.Thread.Sleep(100);
+            }
+        }
+        catch { }
         waveIn.StopRecording();
         waveOut.Stop();
     }
     
-    static void DuplicateAudio()
+    public static void DuplicateAudio(int defaultOutputDevice = 0, System.Threading.CancellationToken? cancelToken = null)
     { 
         
  var enumerator = new NAudio.CoreAudioApi.MMDeviceEnumerator();
@@ -55,9 +58,11 @@ class Program
             Console.WriteLine("Available output devices:");
             for (int i = 0; i < devices.Count; i++)
                 Console.WriteLine($"{i}: {devices[i].FriendlyName}");
-            Console.Write("Enter the device number to duplicate output to: ");
-            int deviceNumber = -1;
-            int.TryParse(Console.ReadLine(), out deviceNumber);
+
+            //Console.Write($"Enter the device number to duplicate output to [default: {defaultOutputDevice}]: ");
+            //string? output = Console.ReadLine();
+            int deviceNumber = defaultOutputDevice;
+            if (!string.IsNullOrWhiteSpace(deviceNumber.ToString())) int.TryParse(deviceNumber.ToString(), out deviceNumber);
 
             using var waveIn = new WasapiLoopbackCapture();
             NAudio.Wave.BufferedWaveProvider buffer = null;
@@ -76,8 +81,17 @@ class Program
             };
 
             waveIn.StartRecording();
-            Console.WriteLine("Duplicating system audio output. Press Enter to stop.");
-            Console.ReadLine();
+            Console.WriteLine("Duplicating system audio output. Press Enter to stop or stop from UI.");
+            try
+            {
+                while (cancelToken == null || !cancelToken.Value.IsCancellationRequested)
+                {
+                    if (Console.KeyAvailable && Console.ReadKey(true).Key == ConsoleKey.Enter)
+                        break;
+                    System.Threading.Thread.Sleep(100);
+                }
+            }
+            catch { }
             waveIn.StopRecording();
             waveOut?.Stop();
 
