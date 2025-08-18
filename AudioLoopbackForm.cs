@@ -1,5 +1,10 @@
 using System;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows.Forms;
+using Microsoft.Win32;
 using NAudio.Wave;
 using NAudio.CoreAudioApi;
 
@@ -8,6 +13,8 @@ public class AudioLoopbackForm : Form
     private Button btnMicLoop;
     private Button btnAudioDup;
     private Button btnStopAll;
+    private Button btnExit;
+    private CheckBox chkRunStartup;
     private ComboBox cmbMic;
     private ComboBox cmbSpeaker;
     private Label lblMic;
@@ -18,40 +25,102 @@ public class AudioLoopbackForm : Form
     private bool dupRunning = false;
     private NotifyIcon trayIcon;
     private ContextMenuStrip trayMenu;
+    private bool allowExit = false;
+    // Fade animation
+    private System.Windows.Forms.Timer fadeTimer = new System.Windows.Forms.Timer();
+    private bool fadeIn = false;
+    private bool fadeOut = false;
+    private double fadeStep = 0.12; // opacity step per tick
 
     public AudioLoopbackForm()
     {
-        this.Text = "Audio Loopback & Duplicate";
+        this.Text = "Audio Loopback & Duplicator";
         this.Width = 400;
         this.Height = 200;
+        this.FormBorderStyle = FormBorderStyle.None; // borderless, non-movable
+        this.DoubleBuffered = true;
+    this.ShowInTaskbar = false; // behave like a tray flyout
+        this.StartPosition = FormStartPosition.Manual; // we'll position it near tray
+        this.BackColor = SystemColors.Control; // vintage light theme
+        this.Padding = new Padding(12);
+    this.TopMost = true; // stay on top by default
 
         // Tray icon and menu
         trayMenu = new ContextMenuStrip();
-        trayMenu.Items.Add("Restore", null, (s, e) => { this.Show(); this.WindowState = FormWindowState.Normal; });
-        trayMenu.Items.Add("Exit", null, (s, e) => { trayIcon.Visible = false; Application.Exit(); });
+        trayMenu.Items.Add("Restore", null, (s, e) => { BeginFadeInAndShowNearTray(); });
+        trayMenu.Items.Add("Exit", null, (s, e) => { allowExit = true; trayIcon.Visible = false; Application.Exit(); });
         trayIcon = new NotifyIcon()
         {
             Text = "Audio Loopback & Duplicate",
-            Icon = SystemIcons.Application,
+            Icon = CreateTrayIcon(),
             ContextMenuStrip = trayMenu,
             Visible = true
         };
-        trayIcon.DoubleClick += (s, e) => { this.Show(); this.WindowState = FormWindowState.Normal; };
+        trayIcon.DoubleClick += (s, e) => { BeginFadeInAndShowNearTray(); };
+        trayIcon.MouseClick += (s, e) =>
+        {
+            if (e.Button == MouseButtons.Left)
+            {
+                if (this.Visible && this.WindowState != FormWindowState.Minimized)
+                    BeginFadeOutAndHide();
+                else
+                    BeginFadeInAndShowNearTray();
+            }
+        };
+
+        // Form events
         this.Resize += AudioLoopbackForm_Resize;
         this.FormClosing += AudioLoopbackForm_FormClosing;
+        this.Deactivate += (s, e) => { if (this.Visible) BeginFadeOutAndHide(); }; // hide when clicking away
+        this.Load += (s, e) => { ApplyRoundedCorners(0); StyleControls(); BeginFadeInAndShowNearTray(); };
 
-        lblMic = new Label { Text = "Microphone:", Left = 10, Top = 20, Width = 80 };
-        cmbMic = new ComboBox { Left = 100, Top = 18, Width = 200 };
-        lblSpeaker = new Label { Text = "Speaker:", Left = 10, Top = 60, Width = 80 };
-        cmbSpeaker = new ComboBox { Left = 100, Top = 58, Width = 200 };
-        btnMicLoop = new Button { Text = "Start Mic Loopback", Left = 10, Top = 100, Width = 120 };
-        btnAudioDup = new Button { Text = "Start Audio Duplicate", Left = 140, Top = 100, Width = 120 };
-        btnStopAll = new Button { Text = "Stop All", Left = 270, Top = 100, Width = 100 };
+        // Fade timer setup
+        fadeTimer.Interval = 20; // ~50fps
+        fadeTimer.Tick += (s, e) =>
+        {
+            if (fadeIn)
+            {
+                this.Opacity = Math.Min(1.0, this.Opacity + fadeStep);
+                if (this.Opacity >= 0.999)
+                {
+                    fadeIn = false;
+                    fadeTimer.Stop();
+                    this.Opacity = 1.0;
+                }
+            }
+            else if (fadeOut)
+            {
+                this.Opacity = Math.Max(0.0, this.Opacity - fadeStep);
+                if (this.Opacity <= 0.01)
+                {
+                    fadeOut = false;
+                    fadeTimer.Stop();
+                    this.Opacity = 0.0;
+                    this.Hide();
+                }
+            }
+            else
+            {
+                fadeTimer.Stop();
+            }
+        };
+
+        // Controls
+        lblMic = new Label { Text = "Microphone:", Left = 16, Top = 22, Width = 90 };
+        cmbMic = new ComboBox { Left = 110, Top = 18, Width = 250, DropDownStyle = ComboBoxStyle.DropDownList };
+        lblSpeaker = new Label { Text = "Speaker:", Left = 16, Top = 62, Width = 90 };
+        cmbSpeaker = new ComboBox { Left = 110, Top = 58, Width = 250, DropDownStyle = ComboBoxStyle.DropDownList };
+        btnMicLoop = new Button { Text = "Start Mic Loopback", Left = 16, Top = 105, Width = 150, Height = 28 };
+        btnAudioDup = new Button { Text = "Start Audio Duplicate", Left = 174, Top = 105, Width = 160, Height = 28 };
+    btnStopAll = new Button { Text = "Stop All", Left = 338, Top = 105, Width = 46, Height = 28 };
+    chkRunStartup = new CheckBox { Text = "Run at startup", Left = 90, Top = 145, Width = 120, Height = 24, Checked = IsStartupEnabled() };
+        btnExit = new Button { Text = "Exit", Left = 16, Top = 145, Width = 60, Height = 24 };
 
         btnMicLoop.Click += BtnMicLoop_Click;
         btnAudioDup.Click += BtnAudioDup_Click;
         btnStopAll.Click += BtnStopAll_Click;
-
+    btnExit.Click += (s, e) => { allowExit = true; trayIcon.Visible = false; Application.Exit(); };
+    chkRunStartup.CheckedChanged += (s, e) => { SetRunAtStartup(chkRunStartup.Checked); };
         this.Controls.Add(lblMic);
         this.Controls.Add(cmbMic);
         this.Controls.Add(lblSpeaker);
@@ -59,6 +128,8 @@ public class AudioLoopbackForm : Form
         this.Controls.Add(btnMicLoop);
         this.Controls.Add(btnAudioDup);
         this.Controls.Add(btnStopAll);
+        this.Controls.Add(btnExit);
+        this.Controls.Add(chkRunStartup);
 
         // Populate device lists
         for (int i = 0; i < WaveInEvent.DeviceCount; i++)
@@ -75,6 +146,239 @@ public class AudioLoopbackForm : Form
         if (cmbSpeaker.Items.Count > 0) cmbSpeaker.SelectedIndex = 0;
     }
 
+    private void StyleControls()
+    {
+        // Use classic/vintage system palette
+        this.Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 9f, FontStyle.Regular);
+        var text = SystemColors.ControlText;
+        var subtle = SystemColors.ControlText;
+        var fieldBg = SystemColors.Window;
+
+        foreach (Control c in this.Controls)
+        {
+            if (c is Label l)
+            {
+                l.ForeColor = subtle;
+            }
+            else if (c is ComboBox cb)
+            {
+                cb.BackColor = fieldBg;
+                cb.ForeColor = text;
+                cb.FlatStyle = FlatStyle.Standard;
+            }
+            else if (c is Button b)
+            {
+                b.FlatStyle = FlatStyle.Standard;
+                b.UseVisualStyleBackColor = true;
+                b.ForeColor = SystemColors.ControlText;
+            }
+        }
+        // Standard buttons will render with classic raised look using system colors
+    }
+
+    private void ApplyRoundedCorners(int radius)
+    {
+        try
+        {
+            if (radius <= 0 || this.Width <= 2 || this.Height <= 2)
+            {
+                this.Region = null;
+                return;
+            }
+            int r = Math.Min(radius * 2, Math.Min(this.Width, this.Height) - 2);
+            if (r <= 0) { this.Region = null; return; }
+            using var path = new GraphicsPath();
+            var rect = new Rectangle(0, 0, this.Width, this.Height);
+            path.AddArc(rect.X, rect.Y, r, r, 180, 90);
+            path.AddArc(rect.Right - r - 1, rect.Y, r, r, 270, 90);
+            path.AddArc(rect.Right - r - 1, rect.Bottom - r - 1, r, r, 0, 90);
+            path.AddArc(rect.X, rect.Bottom - r - 1, r, r, 90, 90);
+            path.CloseFigure();
+            this.Region = new Region(path);
+        }
+        catch { this.Region = null; }
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        var g = e.Graphics;
+    g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+    using var brush = new SolidBrush(SystemColors.Control);
+    g.FillRectangle(brush, this.ClientRectangle);
+    // Draw clear 1px border around the window
+    var outer = new Rectangle(0, 0, this.Width - 1, this.Height - 1);
+    ControlPaint.DrawBorder(g, outer, SystemColors.ActiveBorder, ButtonBorderStyle.Solid);
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+    ApplyRoundedCorners(0);
+    }
+
+    private void WireButtonHover(Button b, Color baseColor)
+    {
+        var hover = Brighten(baseColor, 0.1f);
+        var pressed = Darken(baseColor, 0.1f);
+        b.MouseEnter += (s, e) => b.BackColor = hover;
+        b.MouseLeave += (s, e) => b.BackColor = baseColor;
+        b.MouseDown += (s, e) => { if (e.Button == MouseButtons.Left) b.BackColor = pressed; };
+        b.MouseUp += (s, e) => b.BackColor = b.ClientRectangle.Contains(b.PointToClient(Cursor.Position)) ? hover : baseColor;
+    }
+
+    private static Color Brighten(Color c, float amount)
+    {
+        float a = Math.Clamp(amount, 0f, 1f);
+        int r = (int)(c.R + (255 - c.R) * a);
+        int g = (int)(c.G + (255 - c.G) * a);
+        int b = (int)(c.B + (255 - c.B) * a);
+        return Color.FromArgb(c.A, r, g, b);
+    }
+
+    private static Color Darken(Color c, float amount)
+    {
+        float a = Math.Clamp(amount, 0f, 1f);
+        int r = (int)(c.R * (1 - a));
+        int g = (int)(c.G * (1 - a));
+        int b = (int)(c.B * (1 - a));
+        return Color.FromArgb(c.A, r, g, b);
+    }
+
+    private Color? GetWindowsAccentColor()
+    {
+        try
+        {
+            uint color;
+            bool opaque;
+            if (DwmGetColorizationColor(out color, out opaque) == 0)
+            {
+                // ARGB
+                byte a = (byte)((color >> 24) & 0xFF);
+                byte r = (byte)((color >> 16) & 0xFF);
+                byte g = (byte)((color >> 8) & 0xFF);
+                byte b = (byte)(color & 0xFF);
+                return Color.FromArgb(a, r, g, b);
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmGetColorizationColor(out uint pcrColorization, out bool pfOpaqueBlend);
+
+    // Prevent moving/resizing by swallowing hit-tests
+    protected override void WndProc(ref Message m)
+    {
+    const int WM_NCHITTEST = 0x84;
+    const int HTCLIENT = 1;
+        if (m.Msg == WM_NCHITTEST)
+        {
+            m.Result = (IntPtr)HTCLIENT;
+            return;
+        }
+        base.WndProc(ref m);
+    }
+
+    private void ShowNearTray()
+    {
+        // Approximate bottom-right of the primary screen working area (like volume flyout)
+        var wa = Screen.PrimaryScreen?.WorkingArea ?? Screen.FromControl(this).WorkingArea;
+        int margin = 8;
+        int x = wa.Right - this.Width - margin;
+        int y = wa.Bottom - this.Height - margin;
+    this.Location = new Point(Math.Max(wa.Left + margin, x), Math.Max(wa.Top + margin, y));
+    this.WindowState = FormWindowState.Normal;
+        this.Show();
+        this.Activate();
+    }
+
+    private void BeginFadeInAndShowNearTray()
+    {
+        fadeOut = false;
+        fadeIn = true;
+        this.Opacity = 0.0;
+        ShowNearTray();
+        fadeTimer.Start();
+    }
+
+    private void BeginFadeOutAndHide()
+    {
+        if (!this.Visible) return;
+        fadeIn = false;
+        fadeOut = true;
+        fadeTimer.Start();
+    }
+
+    private Icon CreateTrayIcon()
+    {
+        // Create a small 16x16 icon with a blue circle and white play triangle
+        var bmp = new Bitmap(16, 16, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        using (var g = Graphics.FromImage(bmp))
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.Clear(Color.Transparent);
+
+            using (var brush = new SolidBrush(Color.DeepSkyBlue))
+            {
+                g.FillEllipse(brush, 0, 0, 15, 15);
+            }
+
+            var triangle = new[] { new Point(6, 4), new Point(11, 8), new Point(6, 12) };
+            using (var white = new SolidBrush(Color.White))
+            {
+                g.FillPolygon(white, triangle);
+            }
+        }
+        return Icon.FromHandle(bmp.GetHicon());
+    }
+
+    private bool IsStartupEnabled()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Run", false);
+            var name = GetStartupValueName();
+            var value = key?.GetValue(name) as string;
+            if (string.IsNullOrEmpty(value)) return false;
+            // Compare path ignoring quotes
+            string exe = Application.ExecutablePath;
+            string normalized = value.Trim().Trim('"');
+            return normalized.StartsWith(exe, StringComparison.OrdinalIgnoreCase);
+        }
+        catch { return false; }
+    }
+
+    private void SetRunAtStartup(bool enable)
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Run", true)
+                           ?? Registry.CurrentUser.CreateSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+            var name = GetStartupValueName();
+            if (enable)
+            {
+                string exe = Application.ExecutablePath;
+                key.SetValue(name, $"\"{exe}\"");
+            }
+            else
+            {
+                if (key.GetValue(name) != null)
+                    key.DeleteValue(name, false);
+            }
+        }
+        catch
+        {
+            // Best-effort; ignore errors (user might not have perms)
+            chkRunStartup.CheckedChanged -= (s, e) => { SetRunAtStartup(chkRunStartup.Checked); };
+            chkRunStartup.Checked = !enable; // revert UI state
+            chkRunStartup.CheckedChanged += (s, e) => { SetRunAtStartup(chkRunStartup.Checked); };
+        }
+    }
+
+    private static string GetStartupValueName() => "AudioLoopback";
+
     private void AudioLoopbackForm_Resize(object? sender, EventArgs e)
     {
         if (this.WindowState == FormWindowState.Minimized)
@@ -89,7 +393,7 @@ public class AudioLoopbackForm : Form
     private void AudioLoopbackForm_FormClosing(object? sender, FormClosingEventArgs e)
     {
         // Minimize to tray instead of closing
-        if (e.CloseReason == CloseReason.UserClosing)
+        if (!allowExit && e.CloseReason == CloseReason.UserClosing)
         {
             e.Cancel = true;
             this.WindowState = FormWindowState.Minimized;
