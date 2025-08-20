@@ -103,6 +103,7 @@ public class EffectsProvider : ISampleProvider
     private readonly DistortionEffect distortionEffect;
     private readonly ChorusEffect chorusEffect;
     private readonly FlangerEffect flangerEffect;
+    private readonly VocalRemovalEffect vocalRemovalEffect;
 
     public EffectsProvider(ISampleProvider source)
     {
@@ -112,6 +113,7 @@ public class EffectsProvider : ISampleProvider
         this.distortionEffect = new DistortionEffect();
         this.chorusEffect = new ChorusEffect(source.WaveFormat);
         this.flangerEffect = new FlangerEffect(source.WaveFormat);
+        this.vocalRemovalEffect = new VocalRemovalEffect();
     }
 
     public WaveFormat WaveFormat => source.WaveFormat;
@@ -144,6 +146,9 @@ public class EffectsProvider : ISampleProvider
                 {
                     buffer[offset + i] *= (1.0f + (MicLoopback.EffectIntensity - 0.5f) * 0.5f);
                 }
+                break;
+            case "Vocal Remover":
+                vocalRemovalEffect.ProcessSamples(buffer, offset, samplesRead, MicLoopback.EffectIntensity);
                 break;
         }
         
@@ -279,6 +284,67 @@ public class FlangerEffect
             
             buffer[offset + i] = (buffer[offset + i] + delayed * intensity) * 0.7f;
             writeIndex = (writeIndex + 1) % delayBuffer.Length;
+        }
+    }
+}
+
+public class VocalRemovalEffect
+{
+    private float[] previousSamples = new float[0];
+    private bool initialized = false;
+
+    public void ProcessSamples(float[] buffer, int offset, int count, float intensity)
+    {
+        // Initialize previous samples buffer if needed
+        if (!initialized)
+        {
+            previousSamples = new float[count];
+            initialized = true;
+        }
+        
+        // Ensure buffer is large enough
+        if (previousSamples.Length < count)
+        {
+            Array.Resize(ref previousSamples, count);
+        }
+
+        // For stereo audio, we can do center channel extraction
+        // For mono audio, we'll apply a high-pass filter to reduce vocal frequencies
+        
+        if (count % 2 == 0) // Assume stereo if even sample count
+        {
+            // Stereo vocal removal - subtract center channel
+            for (int i = 0; i < count; i += 2)
+            {
+                float left = buffer[offset + i];
+                float right = buffer[offset + i + 1];
+                
+                // Center channel extraction: subtract the common (center) signal
+                float center = (left + right) * 0.5f;
+                float leftMinusCenter = left - center;
+                float rightMinusCenter = right - center;
+                
+                // Apply intensity - blend between original and processed
+                buffer[offset + i] = left * (1.0f - intensity) + leftMinusCenter * intensity;
+                buffer[offset + i + 1] = right * (1.0f - intensity) + rightMinusCenter * intensity;
+            }
+        }
+        else
+        {
+            // Mono vocal removal - apply high-pass filter to reduce vocal frequencies
+            float cutoffFreq = 0.1f + (intensity * 0.3f); // Adjustable cutoff based on intensity
+            
+            for (int i = 0; i < count; i++)
+            {
+                float input = buffer[offset + i];
+                
+                // Simple high-pass filter
+                float filtered = input - (previousSamples[i] * cutoffFreq);
+                previousSamples[i] = input;
+                
+                // Blend between original and filtered
+                buffer[offset + i] = input * (1.0f - intensity) + filtered * intensity;
+            }
         }
     }
 }

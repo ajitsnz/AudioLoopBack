@@ -22,6 +22,7 @@ public class AudioLoopbackForm : Form
     private Button btnFlanger;
     private Button btnPitchShift;
     private Button btnNoEffect;
+    private Button btnVocalRemover;
     private TrackBar tbEffectIntensity;
     private Label lblEffectIntensity;
     private CheckBox chkDarkTheme;
@@ -147,6 +148,7 @@ public class AudioLoopbackForm : Form
     btnFlanger = new Button { Text = "Flanger", Left = 80, Top = 45, Width = 60, Height = 25, Parent = pnlDJEffects };
     btnPitchShift = new Button { Text = "Pitch Shift", Left = 150, Top = 45, Width = 70, Height = 25, Parent = pnlDJEffects };
     btnNoEffect = new Button { Text = "None", Left = 10, Top = 80, Width = 60, Height = 25, Parent = pnlDJEffects };
+    btnVocalRemover = new Button { Text = "Instrumental", Left = 80, Top = 80, Width = 80, Height = 25, Parent = pnlDJEffects };
     
     // Effect intensity control
     lblEffectIntensity = new Label { Text = "Intensity:", Left = 240, Top = 15, Width = 60, Height = 20, Parent = pnlDJEffects };
@@ -173,6 +175,7 @@ public class AudioLoopbackForm : Form
     btnFlanger.Click += (s, e) => ApplyDJEffect("Flanger");
     btnPitchShift.Click += (s, e) => ApplyDJEffect("Pitch Shift");
     btnNoEffect.Click += (s, e) => ApplyDJEffect("None");
+    btnVocalRemover.Click += (s, e) => ApplyDJEffect("Vocal Remover");
     tbEffectIntensity.ValueChanged += (s, e) => { 
         effectIntensity = tbEffectIntensity.Value / 100.0f; 
         MicLoopback.EffectIntensity = effectIntensity;
@@ -640,6 +643,7 @@ public class AudioLoopbackForm : Form
             "Flanger" => btnFlanger,
             "Pitch Shift" => btnPitchShift,
             "None" => btnNoEffect,
+            "Vocal Remover" => btnVocalRemover,
             _ => null
         };
         
@@ -665,6 +669,7 @@ public class AudioLoopbackForm : Form
         btnFlanger.BackColor = SystemColors.Control;
         btnPitchShift.BackColor = SystemColors.Control;
         btnNoEffect.BackColor = SystemColors.Control;
+        btnVocalRemover.BackColor = SystemColors.Control;
     }
 
     private string GetEffectDescription(string effectName)
