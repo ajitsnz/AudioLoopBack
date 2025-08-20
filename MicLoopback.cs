@@ -1,10 +1,12 @@
 using System;
+using System.Collections.Generic;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 
 public static class MicLoopback
 {
     public static string CurrentEffect = "None";
+    public static HashSet<string> ActiveEffects = new HashSet<string>();
     public static float EffectIntensity = 0.5f;
 
     public static void LoopMicrophone(int defaultInputDevice = 0, System.Threading.CancellationToken? cancelToken = null)
@@ -122,34 +124,37 @@ public class EffectsProvider : ISampleProvider
     {
         int samplesRead = source.Read(buffer, offset, count);
         
-        // Apply the currently selected effect
-        switch (MicLoopback.CurrentEffect)
+        // Apply all active effects in sequence
+        foreach (var effectName in MicLoopback.ActiveEffects)
         {
-            case "Echo":
-                echoEffect.ProcessSamples(buffer, offset, samplesRead, MicLoopback.EffectIntensity);
-                break;
-            case "Reverb":
-                reverbEffect.ProcessSamples(buffer, offset, samplesRead, MicLoopback.EffectIntensity);
-                break;
-            case "Distortion":
-                distortionEffect.ProcessSamples(buffer, offset, samplesRead, MicLoopback.EffectIntensity);
-                break;
-            case "Chorus":
-                chorusEffect.ProcessSamples(buffer, offset, samplesRead, MicLoopback.EffectIntensity);
-                break;
-            case "Flanger":
-                flangerEffect.ProcessSamples(buffer, offset, samplesRead, MicLoopback.EffectIntensity);
-                break;
-            case "Pitch Shift":
-                // Simple pitch shift by amplitude modulation
-                for (int i = 0; i < samplesRead; i++)
-                {
-                    buffer[offset + i] *= (1.0f + (MicLoopback.EffectIntensity - 0.5f) * 0.5f);
-                }
-                break;
-            case "Vocal Remover":
-                vocalRemovalEffect.ProcessSamples(buffer, offset, samplesRead, MicLoopback.EffectIntensity);
-                break;
+            switch (effectName)
+            {
+                case "Echo":
+                    echoEffect.ProcessSamples(buffer, offset, samplesRead, MicLoopback.EffectIntensity);
+                    break;
+                case "Reverb":
+                    reverbEffect.ProcessSamples(buffer, offset, samplesRead, MicLoopback.EffectIntensity);
+                    break;
+                case "Distortion":
+                    distortionEffect.ProcessSamples(buffer, offset, samplesRead, MicLoopback.EffectIntensity);
+                    break;
+                case "Chorus":
+                    chorusEffect.ProcessSamples(buffer, offset, samplesRead, MicLoopback.EffectIntensity);
+                    break;
+                case "Flanger":
+                    flangerEffect.ProcessSamples(buffer, offset, samplesRead, MicLoopback.EffectIntensity);
+                    break;
+                case "Pitch Shift":
+                    // Simple pitch shift by amplitude modulation
+                    for (int i = 0; i < samplesRead; i++)
+                    {
+                        buffer[offset + i] *= (1.0f + (MicLoopback.EffectIntensity - 0.5f) * 0.5f);
+                    }
+                    break;
+                case "Vocal Remover":
+                    vocalRemovalEffect.ProcessSamples(buffer, offset, samplesRead, MicLoopback.EffectIntensity);
+                    break;
+            }
         }
         
         return samplesRead;

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
@@ -23,6 +24,9 @@ public class AudioLoopbackForm : Form
     private Button btnPitchShift;
     private Button btnNoEffect;
     private Button btnVocalRemover;
+    private Button btnCombo1; // Instrumental + Reverb
+    private Button btnCombo2; // Instrumental + Echo  
+    private Button btnCombo3; // Instrumental + Chorus
     private TrackBar tbEffectIntensity;
     private Label lblEffectIntensity;
     private CheckBox chkDarkTheme;
@@ -40,6 +44,7 @@ public class AudioLoopbackForm : Form
     private bool djEffectsPanelVisible = false;
     private string currentEffect = "None";
     private float effectIntensity = 0.5f;
+    private HashSet<string> activeEffects = new HashSet<string>();
     private NotifyIcon trayIcon;
     private ContextMenuStrip trayMenu;
     private bool allowExit = false;
@@ -137,7 +142,7 @@ public class AudioLoopbackForm : Form
     chkDarkTheme = new CheckBox { Text = "Dark Theme", Left = 150, Top = 140, Width = 100, Height = 24, Checked = false, Enabled = true, Visible = true };
 
     // Create DJ Effects Panel (initially hidden)
-    pnlDJEffects = new Panel { Left = 16, Top = 170, Width = 400, Height = 120, Visible = false, BorderStyle = BorderStyle.FixedSingle };
+    pnlDJEffects = new Panel { Left = 16, Top = 170, Width = 400, Height = 160, Visible = false, BorderStyle = BorderStyle.FixedSingle };
     pnlDJEffects.BackColor = Color.FromArgb(220, 220, 220);
     
     // DJ Effect buttons
@@ -149,6 +154,11 @@ public class AudioLoopbackForm : Form
     btnPitchShift = new Button { Text = "Pitch Shift", Left = 150, Top = 45, Width = 70, Height = 25, Parent = pnlDJEffects };
     btnNoEffect = new Button { Text = "None", Left = 10, Top = 80, Width = 60, Height = 25, Parent = pnlDJEffects };
     btnVocalRemover = new Button { Text = "Instrumental", Left = 80, Top = 80, Width = 80, Height = 25, Parent = pnlDJEffects };
+    
+    // Combination buttons
+    btnCombo1 = new Button { Text = "Karaoke Reverb", Left = 10, Top = 115, Width = 100, Height = 25, Parent = pnlDJEffects };
+    btnCombo2 = new Button { Text = "Karaoke Echo", Left = 120, Top = 115, Width = 90, Height = 25, Parent = pnlDJEffects };
+    btnCombo3 = new Button { Text = "Karaoke Chorus", Left = 220, Top = 115, Width = 95, Height = 25, Parent = pnlDJEffects };
     
     // Effect intensity control
     lblEffectIntensity = new Label { Text = "Intensity:", Left = 240, Top = 15, Width = 60, Height = 20, Parent = pnlDJEffects };
@@ -176,6 +186,11 @@ public class AudioLoopbackForm : Form
     btnPitchShift.Click += (s, e) => ApplyDJEffect("Pitch Shift");
     btnNoEffect.Click += (s, e) => ApplyDJEffect("None");
     btnVocalRemover.Click += (s, e) => ApplyDJEffect("Vocal Remover");
+    
+    // Combination button handlers
+    btnCombo1.Click += (s, e) => ApplyEffectCombination("Vocal Remover", "Reverb");
+    btnCombo2.Click += (s, e) => ApplyEffectCombination("Vocal Remover", "Echo");
+    btnCombo3.Click += (s, e) => ApplyEffectCombination("Vocal Remover", "Chorus");
     tbEffectIntensity.ValueChanged += (s, e) => { 
         effectIntensity = tbEffectIntensity.Value / 100.0f; 
         MicLoopback.EffectIntensity = effectIntensity;
@@ -625,15 +640,22 @@ public class AudioLoopbackForm : Form
         btnDJEffects.Text = djEffectsPanelVisible ? "Hide Effects" : "DJ Effects";
         
         // Adjust form height based on panel visibility
-        this.Height = djEffectsPanelVisible ? 370 : 250;
+        this.Height = djEffectsPanelVisible ? 410 : 250;
     }
 
     private void ApplyDJEffect(string effectName)
     {
-        // Reset all effect button colors
-        ResetEffectButtons();
+        // Handle "None" effect - clear all effects
+        if (effectName == "None")
+        {
+            activeEffects.Clear();
+            ResetEffectButtons();
+            btnNoEffect.BackColor = Color.LightBlue;
+            MicLoopback.ActiveEffects = activeEffects;
+            return;
+        }
         
-        // Highlight selected effect
+        // Toggle effect on/off
         Button? selectedButton = effectName switch
         {
             "Echo" => btnEcho,
@@ -642,22 +664,90 @@ public class AudioLoopbackForm : Form
             "Chorus" => btnChorus,
             "Flanger" => btnFlanger,
             "Pitch Shift" => btnPitchShift,
-            "None" => btnNoEffect,
             "Vocal Remover" => btnVocalRemover,
             _ => null
         };
         
         if (selectedButton != null)
         {
-            selectedButton.BackColor = Color.LightBlue;
-            currentEffect = effectName;
+            if (activeEffects.Contains(effectName))
+            {
+                // Effect is active, turn it off
+                activeEffects.Remove(effectName);
+                selectedButton.BackColor = SystemColors.Control;
+            }
+            else
+            {
+                // Effect is not active, turn it on
+                activeEffects.Add(effectName);
+                selectedButton.BackColor = Color.LightBlue;
+                // Reset "None" button when any effect is activated
+                btnNoEffect.BackColor = SystemColors.Control;
+            }
             
-            // Set the effect in the audio processing
-            MicLoopback.CurrentEffect = effectName;
+            // Update the audio processing with current active effects
+            MicLoopback.ActiveEffects = activeEffects;
             MicLoopback.EffectIntensity = effectIntensity;
         }
         
         // Effect applied silently - visual feedback through button highlighting
+    }
+
+    private void ApplyEffectCombination(string effect1, string effect2)
+    {
+        // Clear all effects first
+        activeEffects.Clear();
+        ResetEffectButtons();
+        ResetComboButtons();
+        
+        // Add the two effects
+        activeEffects.Add(effect1);
+        activeEffects.Add(effect2);
+        
+        // Highlight the appropriate individual effect buttons
+        HighlightEffectButton(effect1);
+        HighlightEffectButton(effect2);
+        
+        // Highlight the combination button
+        var comboButton = (effect1 == "Vocal Remover" && effect2 == "Reverb") ? btnCombo1 :
+                         (effect1 == "Vocal Remover" && effect2 == "Echo") ? btnCombo2 :
+                         (effect1 == "Vocal Remover" && effect2 == "Chorus") ? btnCombo3 : null;
+        
+        if (comboButton != null)
+        {
+            comboButton.BackColor = Color.LightGreen; // Different color for combinations
+        }
+        
+        // Update the audio processing
+        MicLoopback.ActiveEffects = activeEffects;
+        MicLoopback.EffectIntensity = effectIntensity;
+    }
+
+    private void HighlightEffectButton(string effectName)
+    {
+        Button? button = effectName switch
+        {
+            "Echo" => btnEcho,
+            "Reverb" => btnReverb,
+            "Distortion" => btnDistortion,
+            "Chorus" => btnChorus,
+            "Flanger" => btnFlanger,
+            "Pitch Shift" => btnPitchShift,
+            "Vocal Remover" => btnVocalRemover,
+            _ => null
+        };
+        
+        if (button != null)
+        {
+            button.BackColor = Color.LightBlue;
+        }
+    }
+
+    private void ResetComboButtons()
+    {
+        btnCombo1.BackColor = SystemColors.Control;
+        btnCombo2.BackColor = SystemColors.Control;
+        btnCombo3.BackColor = SystemColors.Control;
     }
 
     private void ResetEffectButtons()
@@ -670,6 +760,7 @@ public class AudioLoopbackForm : Form
         btnPitchShift.BackColor = SystemColors.Control;
         btnNoEffect.BackColor = SystemColors.Control;
         btnVocalRemover.BackColor = SystemColors.Control;
+        ResetComboButtons();
     }
 
     private string GetEffectDescription(string effectName)
