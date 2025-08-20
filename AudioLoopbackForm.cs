@@ -13,6 +13,17 @@ public class AudioLoopbackForm : Form
     private Button btnMicStart;
     private Button btnSpeakerStart;
     private Button btnStopAll;
+    private Button btnDJEffects;
+    private Panel pnlDJEffects;
+    private Button btnEcho;
+    private Button btnReverb;
+    private Button btnDistortion;
+    private Button btnChorus;
+    private Button btnFlanger;
+    private Button btnPitchShift;
+    private Button btnNoEffect;
+    private TrackBar tbEffectIntensity;
+    private Label lblEffectIntensity;
     private CheckBox chkDarkTheme;
     private CheckBox chkRunStartup;
     private ComboBox cmbMic;
@@ -25,6 +36,9 @@ public class AudioLoopbackForm : Form
     private CancellationTokenSource? dupCts;
     private bool micRunning = false;
     private bool dupRunning = false;
+    private bool djEffectsPanelVisible = false;
+    private string currentEffect = "None";
+    private float effectIntensity = 0.5f;
     private NotifyIcon trayIcon;
     private ContextMenuStrip trayMenu;
     private bool allowExit = false;
@@ -39,7 +53,7 @@ public class AudioLoopbackForm : Form
         // Form properties
         this.Text = "Audio Device Router";
         this.Width = 450;
-        this.Height = 190;
+        this.Height = 250;
         this.FormBorderStyle = FormBorderStyle.None; // borderless, non-movable
         this.DoubleBuffered = true;
     this.ShowInTaskbar = false; // behave like a tray flyout
@@ -117,8 +131,30 @@ public class AudioLoopbackForm : Form
     btnSpeakerStart = new Button { Text = "Enable", Left = 370, Top = 58, Width = 60, Height = 28 };
     btnStopAll = new Button { Text = "Disable All", Left = 16, Top = 100, Width = 100, Height = 28 };
     var btnRefreshDevices = new Button { Text = "Refresh Devices", Left = 130, Top = 100, Width = 120, Height = 28 };
+    btnDJEffects = new Button { Text = "Effects", Left = 260, Top = 100, Width = 80, Height = 28 };
     chkRunStartup = new CheckBox { Text = "Run at startup", Left = 16, Top = 140, Width = 120, Height = 24, Checked = IsStartupEnabled() };
     chkDarkTheme = new CheckBox { Text = "Dark Theme", Left = 150, Top = 140, Width = 100, Height = 24, Checked = false, Enabled = true, Visible = true };
+
+    // Create DJ Effects Panel (initially hidden)
+    pnlDJEffects = new Panel { Left = 16, Top = 170, Width = 400, Height = 120, Visible = false, BorderStyle = BorderStyle.FixedSingle };
+    pnlDJEffects.BackColor = Color.FromArgb(220, 220, 220);
+    
+    // DJ Effect buttons
+    btnEcho = new Button { Text = "Echo", Left = 10, Top = 10, Width = 60, Height = 25, Parent = pnlDJEffects };
+    btnReverb = new Button { Text = "Reverb", Left = 80, Top = 10, Width = 60, Height = 25, Parent = pnlDJEffects };
+    btnDistortion = new Button { Text = "Distortion", Left = 150, Top = 10, Width = 70, Height = 25, Parent = pnlDJEffects };
+    btnChorus = new Button { Text = "Chorus", Left = 10, Top = 45, Width = 60, Height = 25, Parent = pnlDJEffects };
+    btnFlanger = new Button { Text = "Flanger", Left = 80, Top = 45, Width = 60, Height = 25, Parent = pnlDJEffects };
+    btnPitchShift = new Button { Text = "Pitch Shift", Left = 150, Top = 45, Width = 70, Height = 25, Parent = pnlDJEffects };
+    btnNoEffect = new Button { Text = "None", Left = 10, Top = 80, Width = 60, Height = 25, Parent = pnlDJEffects };
+    
+    // Effect intensity control
+    lblEffectIntensity = new Label { Text = "Intensity:", Left = 240, Top = 15, Width = 60, Height = 20, Parent = pnlDJEffects };
+    tbEffectIntensity = new TrackBar { Left = 240, Top = 35, Width = 120, Height = 45, Parent = pnlDJEffects };
+    tbEffectIntensity.Minimum = 0;
+    tbEffectIntensity.Maximum = 100;
+    tbEffectIntensity.Value = 50;
+    tbEffectIntensity.TickFrequency = 25;
     // Set label colors to black for visibility
     lblMic.ForeColor = Color.Black;
     lblSpeaker.ForeColor = Color.Black;
@@ -127,6 +163,21 @@ public class AudioLoopbackForm : Form
     btnSpeakerStart.Click += BtnSpeakerLoopback_Click;
     btnStopAll.Click += BtnStopAll_Click;
     btnRefreshDevices.Click += BtnRefreshDevices_Click;
+    btnDJEffects.Click += BtnDJEffects_Click;
+    
+    // DJ Effects event handlers
+    btnEcho.Click += (s, e) => ApplyDJEffect("Echo");
+    btnReverb.Click += (s, e) => ApplyDJEffect("Reverb");
+    btnDistortion.Click += (s, e) => ApplyDJEffect("Distortion");
+    btnChorus.Click += (s, e) => ApplyDJEffect("Chorus");
+    btnFlanger.Click += (s, e) => ApplyDJEffect("Flanger");
+    btnPitchShift.Click += (s, e) => ApplyDJEffect("Pitch Shift");
+    btnNoEffect.Click += (s, e) => ApplyDJEffect("None");
+    tbEffectIntensity.ValueChanged += (s, e) => { 
+        effectIntensity = tbEffectIntensity.Value / 100.0f; 
+        MicLoopback.EffectIntensity = effectIntensity;
+    };
+    
     chkRunStartup.CheckedChanged += (s, e) => { SetRunAtStartup(chkRunStartup.Checked); };
     this.Controls.Add(cmbMic);
     this.Controls.Add(lblMic);
@@ -136,6 +187,8 @@ public class AudioLoopbackForm : Form
     this.Controls.Add(btnSpeakerStart);
     this.Controls.Add(btnStopAll);
     this.Controls.Add(btnRefreshDevices);
+    this.Controls.Add(btnDJEffects);
+    this.Controls.Add(pnlDJEffects);
     this.Controls.Add(chkRunStartup);
     this.Controls.Add(chkDarkTheme);
     chkDarkTheme.BringToFront();
@@ -199,11 +252,10 @@ public class AudioLoopbackForm : Form
         try
         {
             RefreshDeviceLists();
-            MessageBox.Show("Device lists refreshed!", "Audio Device Router", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
-        catch (Exception ex)
+        catch
         {
-            MessageBox.Show($"Failed to refresh devices: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            // Silently handle errors - could add logging here if needed
         }
     }
 
@@ -561,6 +613,72 @@ public class AudioLoopbackForm : Form
             dupCts = null;
             dupThread = null;
         }
+    }
+
+    private void BtnDJEffects_Click(object? sender, EventArgs e)
+    {
+        djEffectsPanelVisible = !djEffectsPanelVisible;
+        pnlDJEffects.Visible = djEffectsPanelVisible;
+        btnDJEffects.Text = djEffectsPanelVisible ? "Hide Effects" : "DJ Effects";
+        
+        // Adjust form height based on panel visibility
+        this.Height = djEffectsPanelVisible ? 370 : 250;
+    }
+
+    private void ApplyDJEffect(string effectName)
+    {
+        // Reset all effect button colors
+        ResetEffectButtons();
+        
+        // Highlight selected effect
+        Button? selectedButton = effectName switch
+        {
+            "Echo" => btnEcho,
+            "Reverb" => btnReverb,
+            "Distortion" => btnDistortion,
+            "Chorus" => btnChorus,
+            "Flanger" => btnFlanger,
+            "Pitch Shift" => btnPitchShift,
+            "None" => btnNoEffect,
+            _ => null
+        };
+        
+        if (selectedButton != null)
+        {
+            selectedButton.BackColor = Color.LightBlue;
+            currentEffect = effectName;
+            
+            // Set the effect in the audio processing
+            MicLoopback.CurrentEffect = effectName;
+            MicLoopback.EffectIntensity = effectIntensity;
+        }
+        
+        // Effect applied silently - visual feedback through button highlighting
+    }
+
+    private void ResetEffectButtons()
+    {
+        btnEcho.BackColor = SystemColors.Control;
+        btnReverb.BackColor = SystemColors.Control;
+        btnDistortion.BackColor = SystemColors.Control;
+        btnChorus.BackColor = SystemColors.Control;
+        btnFlanger.BackColor = SystemColors.Control;
+        btnPitchShift.BackColor = SystemColors.Control;
+        btnNoEffect.BackColor = SystemColors.Control;
+    }
+
+    private string GetEffectDescription(string effectName)
+    {
+        return effectName switch
+        {
+            "Echo" => "Creates delayed repetitions of the audio signal, perfect for dramatic vocal effects.",
+            "Reverb" => "Adds spatial depth and ambience, simulating different room acoustics.",
+            "Distortion" => "Adds harmonic saturation and grit to make sounds more aggressive.",
+            "Chorus" => "Creates a thick, lush sound by adding slightly delayed and pitch-modulated copies.",
+            "Flanger" => "Creates a sweeping, jet-like effect by mixing the signal with a short, varying delay.",
+            "Pitch Shift" => "Changes the pitch of the audio without affecting its duration.",
+            _ => "Unknown effect."
+        };
     }
 }
 
