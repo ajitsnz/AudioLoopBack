@@ -16,25 +16,74 @@ namespace AudioEffectsStudio
     {
         #region Private Fields
         
-        private ComboBox inputSourceComboBox;
-        private ComboBox outputDeviceComboBox;
-        private Button startInputRoutingButton;
-        private Button stopInputRoutingButton;
-        private Button startOutputRoutingButton;
-        private Button stopOutputRoutingButton;
-        private Button refreshButton;
+        // Dynamic routing panels
+        private Panel inputRoutingPanel;
+        private Panel outputRoutingPanel;
+        private Button addInputRoutingButton;
+        private Button addOutputRoutingButton;
+        
+        // Controls for effects
         private Panel effectsPanel;
         private Panel combinationsPanel;
         private TrackBar intensityTrackBar;
         private Label intensityLabel;
         
-        private CancellationTokenSource inputCancellationTokenSource;
-        private CancellationTokenSource outputCancellationTokenSource;
-        private Thread inputAudioThread;
-        private Thread outputAudioThread;
+        // System tray components
+        private NotifyIcon notifyIcon;
+        private ContextMenuStrip trayContextMenu;
+        
+        // Dynamic routing instances
+        private List<InputRoutingInstance> inputRoutingInstances = new List<InputRoutingInstance>();
+        private List<OutputRoutingInstance> outputRoutingInstances = new List<OutputRoutingInstance>();
+        private List<DeviceToDeviceRoutingInstance> deviceToDeviceRoutingInstances = new List<DeviceToDeviceRoutingInstance>();
+        private int nextInputId = 1;
+        private int nextOutputId = 1;
+        private int nextDeviceToDeviceId = 1;
         
         private readonly Dictionary<string, CheckBox> effectCheckboxes = new Dictionary<string, CheckBox>();
         private readonly string[] availableEffects = { "Echo", "Reverb", "Distortion", "Chorus", "Flanger", "PitchShift", "VocalRemoval" };
+        
+        #endregion
+        
+        #region Routing Instance Classes
+        
+        public class InputRoutingInstance
+        {
+            public int Id { get; set; }
+            public Panel Panel { get; set; }
+            public ComboBox DeviceComboBox { get; set; }
+            public Button StartButton { get; set; }
+            public Button StopButton { get; set; }
+            public Button RemoveButton { get; set; }
+            public CancellationTokenSource CancellationTokenSource { get; set; }
+            public Thread AudioThread { get; set; }
+        }
+        
+        public class OutputRoutingInstance
+        {
+            public int Id { get; set; }
+            public Panel Panel { get; set; }
+            public ComboBox DeviceComboBox { get; set; }
+            public Button StartButton { get; set; }
+            public Button StopButton { get; set; }
+            public Button RemoveButton { get; set; }
+            public CancellationTokenSource CancellationTokenSource { get; set; }
+            public Thread AudioThread { get; set; }
+        }
+        
+        public class DeviceToDeviceRoutingInstance
+        {
+            public int Id { get; set; }
+            public Panel Panel { get; set; }
+            public ComboBox InputDeviceComboBox { get; set; }
+            public ComboBox OutputDeviceComboBox { get; set; }
+            public Button StartButton { get; set; }
+            public Button StopButton { get; set; }
+            public Button RemoveButton { get; set; }
+            public Label StatusLabel { get; set; }
+            public CancellationTokenSource CancellationTokenSource { get; set; }
+            public Thread AudioThread { get; set; }
+        }
         
         #endregion
         
@@ -44,6 +93,10 @@ namespace AudioEffectsStudio
         {
             InitializeComponent();
             LoadAudioDevices();
+            
+            // Subscribe to form events for system tray functionality
+            this.Resize += MainForm_Resize;
+            this.FormClosing += MainForm_FormClosing;
         }
         
         #endregion
@@ -55,149 +108,120 @@ namespace AudioEffectsStudio
             this.SuspendLayout();
             
             // Form settings
-            this.Text = "Audio Effects Studio";
-            this.Size = new Size(800, 700);
+            this.Text = "Audio Effects Studio - Multi-Device Routing";
+            this.Size = new Size(850, 900);
             this.StartPosition = FormStartPosition.CenterScreen;
-            this.FormBorderStyle = FormBorderStyle.FixedSingle;
-            this.MaximizeBox = false;
+            this.FormBorderStyle = FormBorderStyle.Sizable;
             this.BackColor = Color.FromArgb(45, 45, 48);
             this.ForeColor = Color.White;
+            this.AutoScroll = true;
             
-            // Input Source Section
-            var inputGroupBox = new GroupBox
+            // Input Routing Section
+            var inputMainGroupBox = new GroupBox
             {
                 Text = "Input Source Routing (To System Default Output)",
                 Location = new Point(20, 20),
-                Size = new Size(760, 80),
-                ForeColor = Color.White
+                Size = new Size(800, 200),
+                ForeColor = Color.White,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
             
-            var inputSourceLabel = new Label
+            addInputRoutingButton = new Button
             {
-                Text = "Input Source:",
-                Location = new Point(10, 30),
-                Size = new Size(80, 23),
-                ForeColor = Color.White
-            };
-            inputGroupBox.Controls.Add(inputSourceLabel);
-            
-            inputSourceComboBox = new ComboBox
-            {
-                Location = new Point(100, 30),
-                Size = new Size(250, 23),
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                BackColor = Color.FromArgb(60, 60, 60),
-                ForeColor = Color.White
-            };
-            inputGroupBox.Controls.Add(inputSourceComboBox);
-            
-            startInputRoutingButton = new Button
-            {
-                Text = "Start Input Routing",
-                Location = new Point(370, 25),
+                Text = "+ Add Input Route",
+                Location = new Point(10, 20),
                 Size = new Size(120, 30),
                 BackColor = Color.FromArgb(0, 122, 204),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat
             };
-            startInputRoutingButton.Click += StartInputRoutingButton_Click;
-            inputGroupBox.Controls.Add(startInputRoutingButton);
+            addInputRoutingButton.Click += AddInputRoutingButton_Click;
+            inputMainGroupBox.Controls.Add(addInputRoutingButton);
             
-            stopInputRoutingButton = new Button
+            var refreshDevicesButton = new Button
             {
-                Text = "Stop Input Routing",
-                Location = new Point(500, 25),
-                Size = new Size(120, 30),
-                BackColor = Color.FromArgb(191, 97, 106),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Enabled = false
-            };
-            stopInputRoutingButton.Click += StopInputRoutingButton_Click;
-            inputGroupBox.Controls.Add(stopInputRoutingButton);
-            
-            this.Controls.Add(inputGroupBox);
-            
-            // Output Device Section
-            var outputGroupBox = new GroupBox
-            {
-                Text = "Output Device Routing (From System Default Input)",
-                Location = new Point(20, 110),
-                Size = new Size(760, 80),
-                ForeColor = Color.White
-            };
-            
-            var outputDeviceLabel = new Label
-            {
-                Text = "Output Device:",
-                Location = new Point(10, 30),
-                Size = new Size(80, 23),
-                ForeColor = Color.White
-            };
-            outputGroupBox.Controls.Add(outputDeviceLabel);
-            
-            outputDeviceComboBox = new ComboBox
-            {
-                Location = new Point(100, 30),
-                Size = new Size(250, 23),
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                BackColor = Color.FromArgb(60, 60, 60),
-                ForeColor = Color.White
-            };
-            outputGroupBox.Controls.Add(outputDeviceComboBox);
-            
-            startOutputRoutingButton = new Button
-            {
-                Text = "Start Output Routing",
-                Location = new Point(370, 25),
-                Size = new Size(120, 30),
-                BackColor = Color.FromArgb(0, 122, 204),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat
-            };
-            startOutputRoutingButton.Click += StartOutputRoutingButton_Click;
-            outputGroupBox.Controls.Add(startOutputRoutingButton);
-            
-            stopOutputRoutingButton = new Button
-            {
-                Text = "Stop Output Routing",
-                Location = new Point(500, 25),
-                Size = new Size(120, 30),
-                BackColor = Color.FromArgb(191, 97, 106),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Enabled = false
-            };
-            stopOutputRoutingButton.Click += StopOutputRoutingButton_Click;
-            outputGroupBox.Controls.Add(stopOutputRoutingButton);
-            
-            refreshButton = new Button
-            {
-                Text = "Refresh Devices",
-                Location = new Point(630, 30),
-                Size = new Size(100, 30),
+                Text = "🔄 Refresh Devices",
+                Location = new Point(140, 20),
+                Size = new Size(130, 30),
                 BackColor = Color.FromArgb(163, 190, 140),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat
             };
-            refreshButton.Click += RefreshButton_Click;
-            outputGroupBox.Controls.Add(refreshButton);
+            refreshDevicesButton.Click += RefreshDevicesButton_Click;
+            inputMainGroupBox.Controls.Add(refreshDevicesButton);
             
-            this.Controls.Add(outputGroupBox);
+            inputRoutingPanel = new Panel
+            {
+                Location = new Point(10, 60),
+                Size = new Size(780, 130),
+                AutoScroll = true,
+                BorderStyle = BorderStyle.FixedSingle,
+                BackColor = Color.FromArgb(60, 60, 60)
+            };
+            inputMainGroupBox.Controls.Add(inputRoutingPanel);
+            this.Controls.Add(inputMainGroupBox);
             
+            // Output Routing Section
+            var outputMainGroupBox = new GroupBox
+            {
+                Text = "Output Device Routing (From System Default Input)",
+                Location = new Point(20, 240),
+                Size = new Size(800, 200),
+                ForeColor = Color.White,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+            };
+            
+            addOutputRoutingButton = new Button
+            {
+                Text = "+ Add Output Route",
+                Location = new Point(10, 20),
+                Size = new Size(120, 30),
+                BackColor = Color.FromArgb(0, 122, 204),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat
+            };
+            addOutputRoutingButton.Click += AddOutputRoutingButton_Click;
+            outputMainGroupBox.Controls.Add(addOutputRoutingButton);
+            
+            outputRoutingPanel = new Panel
+            {
+                Location = new Point(10, 60),
+                Size = new Size(780, 130),
+                AutoScroll = true,
+                BorderStyle = BorderStyle.FixedSingle,
+                BackColor = Color.FromArgb(60, 60, 60)
+            };
+            outputMainGroupBox.Controls.Add(outputRoutingPanel);
+            this.Controls.Add(outputMainGroupBox);
+            
+            CreateEffectsControls();
+            
+            // Add initial routing instances
+            AddInputRoutingInstance();
+            AddOutputRoutingInstance();
+            
+            // Initialize system tray
+            InitializeSystemTray();
+            
+            this.ResumeLayout();
+        }
+        
+        private void CreateEffectsControls()
+        {
             // Effects intensity control
             var intensityGroupBox = new GroupBox
             {
                 Text = "Effects Intensity",
-                Location = new Point(20, 210),
-                Size = new Size(760, 60),
-                ForeColor = Color.White
+                Location = new Point(20, 460),
+                Size = new Size(800, 60),
+                ForeColor = Color.White,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
             
             intensityTrackBar = new TrackBar
             {
                 Location = new Point(20, 25),
-                Size = new Size(600, 45),
+                Size = new Size(650, 45),
                 Minimum = 0,
                 Maximum = 100,
                 Value = 50,
@@ -209,27 +233,27 @@ namespace AudioEffectsStudio
             intensityLabel = new Label
             {
                 Text = "50%",
-                Location = new Point(630, 35),
+                Location = new Point(680, 35),
                 Size = new Size(40, 23),
                 ForeColor = Color.White
             };
             intensityGroupBox.Controls.Add(intensityLabel);
-            
             this.Controls.Add(intensityGroupBox);
             
             // Effects panel
             var effectsGroupBox = new GroupBox
             {
                 Text = "Individual Effects",
-                Location = new Point(20, 290),
-                Size = new Size(760, 150),
-                ForeColor = Color.White
+                Location = new Point(20, 540),
+                Size = new Size(800, 150),
+                ForeColor = Color.White,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
             
             effectsPanel = new Panel
             {
                 Location = new Point(10, 25),
-                Size = new Size(740, 115),
+                Size = new Size(780, 115),
                 AutoScroll = true
             };
             
@@ -241,23 +265,127 @@ namespace AudioEffectsStudio
             var combinationsGroupBox = new GroupBox
             {
                 Text = "Effect Combinations",
-                Location = new Point(20, 460),
-                Size = new Size(760, 180),
-                ForeColor = Color.White
+                Location = new Point(20, 710),
+                Size = new Size(800, 180),
+                ForeColor = Color.White,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
             
             combinationsPanel = new Panel
             {
                 Location = new Point(10, 25),
-                Size = new Size(740, 145),
+                Size = new Size(780, 145),
                 AutoScroll = true
             };
             
             CreateCombinationButtons();
             combinationsGroupBox.Controls.Add(combinationsPanel);
             this.Controls.Add(combinationsGroupBox);
+        }
+        
+        private void InitializeSystemTray()
+        {
+            // Create context menu for system tray
+            trayContextMenu = new ContextMenuStrip();
             
-            this.ResumeLayout();
+            var showMenuItem = new ToolStripMenuItem("Show Audio Effects Studio");
+            showMenuItem.Click += (s, e) => {
+                Show();
+                WindowState = FormWindowState.Normal;
+                BringToFront();
+            };
+            trayContextMenu.Items.Add(showMenuItem);
+            
+            var hideMenuItem = new ToolStripMenuItem("Hide to System Tray");
+            hideMenuItem.Click += (s, e) => {
+                Hide();
+            };
+            trayContextMenu.Items.Add(hideMenuItem);
+            
+            trayContextMenu.Items.Add(new ToolStripSeparator());
+            
+            var stopAllMenuItem = new ToolStripMenuItem("Stop All Routing");
+            stopAllMenuItem.Click += (s, e) => {
+                StopAllRouting();
+            };
+            trayContextMenu.Items.Add(stopAllMenuItem);
+            
+            trayContextMenu.Items.Add(new ToolStripSeparator());
+            
+            var exitMenuItem = new ToolStripMenuItem("Exit");
+            exitMenuItem.Click += (s, e) => {
+                notifyIcon.Visible = false;
+                Application.Exit();
+            };
+            trayContextMenu.Items.Add(exitMenuItem);
+            
+            // Create system tray icon
+            notifyIcon = new NotifyIcon();
+            notifyIcon.Icon = CreateTrayIcon();
+            notifyIcon.Text = "Audio Effects Studio - Multi-Device Routing";
+            notifyIcon.ContextMenuStrip = trayContextMenu;
+            notifyIcon.Visible = true;
+            
+            // Double-click to show/hide
+            notifyIcon.DoubleClick += (s, e) => {
+                if (Visible)
+                {
+                    Hide();
+                }
+                else
+                {
+                    Show();
+                    WindowState = FormWindowState.Normal;
+                    BringToFront();
+                }
+            };
+        }
+        
+        private Icon CreateTrayIcon()
+        {
+            // Create a simple audio icon using drawing
+            var bitmap = new Bitmap(16, 16);
+            using (var g = Graphics.FromImage(bitmap))
+            {
+                g.Clear(Color.Transparent);
+                
+                // Draw speaker/audio icon
+                using (var brush = new SolidBrush(Color.Black))
+                {
+                    // Speaker body
+                    g.FillRectangle(brush, 2, 6, 4, 4);
+                    // Speaker cone
+                    g.FillPolygon(brush, new Point[] {
+                        new Point(6, 5),
+                        new Point(6, 11),
+                        new Point(10, 9),
+                        new Point(10, 7)
+                    });
+                    // Sound waves
+                    using (var pen = new Pen(Color.Black, 1))
+                    {
+                        g.DrawArc(pen, 11, 4, 4, 8, -45, 90);
+                        g.DrawArc(pen, 12, 3, 6, 10, -45, 90);
+                    }
+                }
+            }
+            
+            return Icon.FromHandle(bitmap.GetHicon());
+        }
+        
+        private void StopAllRouting()
+        {
+            // Stop all input routing instances
+            foreach (var instance in inputRoutingInstances)
+            {
+                StopInputRouting(instance);
+            }
+            
+            // Stop all output routing instances
+            foreach (var instance in outputRoutingInstances)
+            {
+                StopOutputRouting(instance);
+            }
         }
         
         #endregion
@@ -353,44 +481,6 @@ namespace AudioEffectsStudio
             combinationsPanel.Controls.Add(clearButton);
         }
         
-        private void LoadAudioDevices()
-        {
-            try
-            {
-                // Load input sources (system default + microphones, line-in, virtual cables)
-                inputSourceComboBox.Items.Clear();
-                inputSourceComboBox.Items.Add("0: System Default Input");
-                
-                // Add microphone and other input devices
-                for (int i = 0; i < WaveInEvent.DeviceCount; i++)
-                {
-                    var deviceInfo = WaveInEvent.GetCapabilities(i);
-                    inputSourceComboBox.Items.Add($"{i + 1}: {deviceInfo.ProductName}");
-                }
-                
-                // Default to system default input
-                inputSourceComboBox.SelectedIndex = 0;
-                
-                // Load output devices (system default + speakers, headphones, virtual cables)
-                outputDeviceComboBox.Items.Clear();
-                outputDeviceComboBox.Items.Add("0: System Default Output");
-                
-                for (int i = 0; i < WaveOut.DeviceCount; i++)
-                {
-                    var deviceInfo = WaveOut.GetCapabilities(i);
-                    outputDeviceComboBox.Items.Add($"{i + 1}: {deviceInfo.ProductName}");
-                }
-                
-                // Default to system default output
-                outputDeviceComboBox.SelectedIndex = 0;
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Error loading audio devices: {ex.Message}", "Error", 
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-        }
-        
         private string GetEffectDisplayName(string effectName)
         {
             return effectName switch
@@ -401,171 +491,453 @@ namespace AudioEffectsStudio
             };
         }
         
+        private void AddInputRoutingInstance()
+        {
+            var instance = new InputRoutingInstance
+            {
+                Id = nextInputId++,
+                Panel = new Panel
+                {
+                    Size = new Size(750, 40),
+                    BackColor = Color.FromArgb(80, 80, 80),
+                    BorderStyle = BorderStyle.FixedSingle
+                }
+            };
+            
+            // Position this instance
+            int yPosition = inputRoutingInstances.Count * 45 + 5;
+            instance.Panel.Location = new Point(5, yPosition);
+            
+            // Device label
+            var deviceLabel = new Label
+            {
+                Text = $"Input {instance.Id}:",
+                Location = new Point(10, 10),
+                Size = new Size(60, 20),
+                ForeColor = Color.White
+            };
+            instance.Panel.Controls.Add(deviceLabel);
+            
+            // Device ComboBox
+            instance.DeviceComboBox = new ComboBox
+            {
+                Location = new Point(80, 8),
+                Size = new Size(200, 23),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                BackColor = Color.FromArgb(60, 60, 60),
+                ForeColor = Color.White
+            };
+            LoadInputDevicesIntoComboBox(instance.DeviceComboBox);
+            instance.Panel.Controls.Add(instance.DeviceComboBox);
+            
+            // Start Button
+            instance.StartButton = new Button
+            {
+                Text = "Start",
+                Location = new Point(290, 5),
+                Size = new Size(60, 30),
+                BackColor = Color.FromArgb(0, 122, 204),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat
+            };
+            instance.StartButton.Click += (s, e) => StartInputRouting(instance);
+            instance.Panel.Controls.Add(instance.StartButton);
+            
+            // Stop Button
+            instance.StopButton = new Button
+            {
+                Text = "Stop",
+                Location = new Point(360, 5),
+                Size = new Size(60, 30),
+                BackColor = Color.FromArgb(191, 97, 106),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Enabled = false
+            };
+            instance.StopButton.Click += (s, e) => StopInputRouting(instance);
+            instance.Panel.Controls.Add(instance.StopButton);
+            
+            // Remove Button
+            instance.RemoveButton = new Button
+            {
+                Text = "✖",
+                Location = new Point(430, 5),
+                Size = new Size(30, 30),
+                BackColor = Color.FromArgb(191, 97, 106),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat
+            };
+            instance.RemoveButton.Click += (s, e) => RemoveInputRouting(instance);
+            instance.Panel.Controls.Add(instance.RemoveButton);
+            
+            inputRoutingInstances.Add(instance);
+            inputRoutingPanel.Controls.Add(instance.Panel);
+        }
+        
+        private void AddOutputRoutingInstance()
+        {
+            var instance = new OutputRoutingInstance
+            {
+                Id = nextOutputId++,
+                Panel = new Panel
+                {
+                    Size = new Size(750, 40),
+                    BackColor = Color.FromArgb(80, 80, 80),
+                    BorderStyle = BorderStyle.FixedSingle
+                }
+            };
+            
+            // Position this instance
+            int yPosition = outputRoutingInstances.Count * 45 + 5;
+            instance.Panel.Location = new Point(5, yPosition);
+            
+            // Device label
+            var deviceLabel = new Label
+            {
+                Text = $"Output {instance.Id}:",
+                Location = new Point(10, 10),
+                Size = new Size(70, 20),
+                ForeColor = Color.White
+            };
+            instance.Panel.Controls.Add(deviceLabel);
+            
+            // Device ComboBox
+            instance.DeviceComboBox = new ComboBox
+            {
+                Location = new Point(90, 8),
+                Size = new Size(200, 23),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                BackColor = Color.FromArgb(60, 60, 60),
+                ForeColor = Color.White
+            };
+            LoadOutputDevicesIntoComboBox(instance.DeviceComboBox);
+            instance.Panel.Controls.Add(instance.DeviceComboBox);
+            
+            // Start Button
+            instance.StartButton = new Button
+            {
+                Text = "Start",
+                Location = new Point(300, 5),
+                Size = new Size(60, 30),
+                BackColor = Color.FromArgb(0, 122, 204),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat
+            };
+            instance.StartButton.Click += (s, e) => StartOutputRouting(instance);
+            instance.Panel.Controls.Add(instance.StartButton);
+            
+            // Stop Button
+            instance.StopButton = new Button
+            {
+                Text = "Stop",
+                Location = new Point(370, 5),
+                Size = new Size(60, 30),
+                BackColor = Color.FromArgb(191, 97, 106),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Enabled = false
+            };
+            instance.StopButton.Click += (s, e) => StopOutputRouting(instance);
+            instance.Panel.Controls.Add(instance.StopButton);
+            
+            // Remove Button
+            instance.RemoveButton = new Button
+            {
+                Text = "✖",
+                Location = new Point(440, 5),
+                Size = new Size(30, 30),
+                BackColor = Color.FromArgb(191, 97, 106),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat
+            };
+            instance.RemoveButton.Click += (s, e) => RemoveOutputRouting(instance);
+            instance.Panel.Controls.Add(instance.RemoveButton);
+            
+            outputRoutingInstances.Add(instance);
+            outputRoutingPanel.Controls.Add(instance.Panel);
+        }
+        
+        private void LoadInputDevicesIntoComboBox(ComboBox comboBox)
+        {
+            comboBox.Items.Clear();
+            comboBox.Items.Add("System Default Input");
+            
+            try
+            {
+                // Use WASAPI for better device enumeration including Bluetooth devices
+                var deviceEnumerator = new MMDeviceEnumerator();
+                var captureDevices = deviceEnumerator.EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active);
+                
+                foreach (var device in captureDevices)
+                {
+                    comboBox.Items.Add($"{device.FriendlyName}");
+                }
+            }
+            catch
+            {
+                // Fallback to legacy API if WASAPI fails
+                for (int i = 0; i < WaveInEvent.DeviceCount; i++)
+                {
+                    var deviceInfo = WaveInEvent.GetCapabilities(i);
+                    comboBox.Items.Add($"{deviceInfo.ProductName}");
+                }
+            }
+            
+            comboBox.SelectedIndex = 0;
+        }
+        
+        private void LoadOutputDevicesIntoComboBox(ComboBox comboBox)
+        {
+            comboBox.Items.Clear();
+            comboBox.Items.Add("System Default Output");
+            
+            try
+            {
+                // Use WASAPI for better device enumeration including Bluetooth devices
+                var deviceEnumerator = new MMDeviceEnumerator();
+                var renderDevices = deviceEnumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active);
+                
+                foreach (var device in renderDevices)
+                {
+                    comboBox.Items.Add($"{device.FriendlyName}");
+                }
+            }
+            catch
+            {
+                // Fallback to legacy API if WASAPI fails
+                for (int i = 0; i < WaveOut.DeviceCount; i++)
+                {
+                    var deviceInfo = WaveOut.GetCapabilities(i);
+                    comboBox.Items.Add($"{deviceInfo.ProductName}");
+                }
+            }
+            
+            comboBox.SelectedIndex = 0;
+        }
+        
+        private void LoadAudioDevices()
+        {
+            // Refresh all existing ComboBoxes
+            foreach (var instance in inputRoutingInstances)
+            {
+                LoadInputDevicesIntoComboBox(instance.DeviceComboBox);
+            }
+            foreach (var instance in outputRoutingInstances)
+            {
+                LoadOutputDevicesIntoComboBox(instance.DeviceComboBox);
+            }
+        }
+        
         #endregion
         
         #region Event Handlers
         
-        private void StartInputRoutingButton_Click(object sender, EventArgs e)
+        private void AddInputRoutingButton_Click(object sender, EventArgs e)
         {
-            try
-            {
-                if (inputSourceComboBox.SelectedIndex < 0)
-                {
-                    MessageBox.Show("Please select an input source.", "Error",
-                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-                
-                inputCancellationTokenSource = new CancellationTokenSource();
-                
-                inputAudioThread = new Thread(() =>
-                {
-                    try
-                    {
-                        if (inputSourceComboBox.SelectedIndex == 0)
-                        {
-                            // Route system default input to system default output with effects
-                            AudioEngine.StartSystemInputToSystemOutputRouting(inputCancellationTokenSource.Token);
-                        }
-                        else
-                        {
-                            // Route selected input device to system default output with effects
-                            var deviceIndex = inputSourceComboBox.SelectedIndex - 1;
-                            AudioEngine.StartInputDeviceToSystemOutputRouting(deviceIndex, inputCancellationTokenSource.Token);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        this.Invoke((MethodInvoker)delegate
-                        {
-                            MessageBox.Show($"Input routing error: {ex.Message}", "Error",
-                                MessageBoxButtons.OK, MessageBoxIcon.Error);
-                            StopInputRouting();
-                        });
-                    }
-                })
-                {
-                    IsBackground = true
-                };
-                
-                inputAudioThread.Start();
-                
-                startInputRoutingButton.Enabled = false;
-                stopInputRoutingButton.Enabled = true;
-                inputSourceComboBox.Enabled = false;
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Error starting input routing: {ex.Message}", "Error",
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
+            AddInputRoutingInstance();
         }
         
-        private void StopInputRoutingButton_Click(object sender, EventArgs e)
+        private void AddOutputRoutingButton_Click(object sender, EventArgs e)
         {
-            StopInputRouting();
+            AddOutputRoutingInstance();
         }
         
-        private void StartOutputRoutingButton_Click(object sender, EventArgs e)
-        {
-            try
-            {
-                if (outputDeviceComboBox.SelectedIndex < 0)
-                {
-                    MessageBox.Show("Please select an output device.", "Error",
-                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-                
-                outputCancellationTokenSource = new CancellationTokenSource();
-                
-                outputAudioThread = new Thread(() =>
-                {
-                    try
-                    {
-                        if (outputDeviceComboBox.SelectedIndex == 0)
-                        {
-                            // Route system default input to system default output with effects
-                            AudioEngine.StartSystemInputToSystemOutputRouting(outputCancellationTokenSource.Token);
-                        }
-                        else
-                        {
-                            // Route system default input to selected output device with effects
-                            var deviceIndex = outputDeviceComboBox.SelectedIndex - 1;
-                            AudioEngine.StartSystemInputToOutputDeviceRouting(deviceIndex, outputCancellationTokenSource.Token);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        this.Invoke((MethodInvoker)delegate
-                        {
-                            MessageBox.Show($"Output routing error: {ex.Message}", "Error",
-                                MessageBoxButtons.OK, MessageBoxIcon.Error);
-                            StopOutputRouting();
-                        });
-                    }
-                })
-                {
-                    IsBackground = true
-                };
-                
-                outputAudioThread.Start();
-                
-                startOutputRoutingButton.Enabled = false;
-                stopOutputRoutingButton.Enabled = true;
-                outputDeviceComboBox.Enabled = false;
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Error starting output routing: {ex.Message}", "Error",
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-        }
-        
-        private void StopOutputRoutingButton_Click(object sender, EventArgs e)
-        {
-            StopOutputRouting();
-        }
-        
-        private void StopInputRouting()
-        {
-            try
-            {
-                inputCancellationTokenSource?.Cancel();
-                inputAudioThread?.Join(5000);
-                
-                startInputRoutingButton.Enabled = true;
-                stopInputRoutingButton.Enabled = false;
-                inputSourceComboBox.Enabled = true;
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Error stopping input routing: {ex.Message}", "Error",
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-        }
-        
-        private void StopOutputRouting()
-        {
-            try
-            {
-                outputCancellationTokenSource?.Cancel();
-                outputAudioThread?.Join(5000);
-                
-                startOutputRoutingButton.Enabled = true;
-                stopOutputRoutingButton.Enabled = false;
-                outputDeviceComboBox.Enabled = true;
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Error stopping output routing: {ex.Message}", "Error",
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-        }
-        
-        private void RefreshButton_Click(object sender, EventArgs e)
+        private void RefreshDevicesButton_Click(object sender, EventArgs e)
         {
             LoadAudioDevices();
+            MessageBox.Show("Audio devices refreshed successfully!", "Devices Refreshed", 
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        
+        private void MainForm_Resize(object sender, EventArgs e)
+        {
+            // Minimize to system tray when minimized
+            if (WindowState == FormWindowState.Minimized)
+            {
+                Hide();
+                notifyIcon.ShowBalloonTip(2000, "Audio Effects Studio", 
+                    "Application minimized to system tray. Double-click the tray icon to restore.", 
+                    ToolTipIcon.Info);
+            }
+        }
+        
+        private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            // Minimize to tray instead of closing when user clicks X
+            if (e.CloseReason == CloseReason.UserClosing)
+            {
+                e.Cancel = true;
+                Hide();
+                notifyIcon.ShowBalloonTip(2000, "Audio Effects Studio", 
+                    "Application minimized to system tray. Right-click the tray icon to exit.", 
+                    ToolTipIcon.Info);
+            }
+        }
+        
+        private void StartInputRouting(InputRoutingInstance instance)
+        {
+            if (instance.CancellationTokenSource != null)
+                return; // Already running
+                
+            int selectedIndex = instance.DeviceComboBox.SelectedIndex;
+            if (selectedIndex < 0) return;
+            
+            instance.CancellationTokenSource = new CancellationTokenSource();
+            
+            instance.AudioThread = new Thread(() =>
+            {
+                try
+                {
+                    if (selectedIndex == 0)
+                    {
+                        // System Default Input to System Default Output
+                        AudioEngine.StartSystemInputToSystemOutputRouting(instance.CancellationTokenSource.Token);
+                    }
+                    else
+                    {
+                        // Selected Input Device to System Default Output
+                        AudioEngine.StartInputDeviceToSystemOutputRouting(selectedIndex - 1, instance.CancellationTokenSource.Token);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    BeginInvoke((Action)(() =>
+                    {
+                        string errorMessage = ex.Message;
+                        
+                        // Provide user-friendly messages for common Bluetooth issues
+                        if (ex.Message.Contains("0x8889000F") || ex.Message.Contains("disconnected"))
+                        {
+                            errorMessage = $"Bluetooth device for Input {instance.Id} was disconnected.\n\nPlease:\n1. Reconnect your Bluetooth device\n2. Click 'Refresh Devices' button\n3. Try starting the routing again";
+                        }
+                        else if (ex.Message.Contains("0x88890008") || ex.Message.Contains("in use"))
+                        {
+                            errorMessage = $"Audio device for Input {instance.Id} is being used by another application.\n\nPlease close other audio applications and try again.";
+                        }
+                        
+                        MessageBox.Show(errorMessage, "Audio Routing Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        StopInputRouting(instance);
+                    }));
+                }
+            })
+            { IsBackground = true };
+            
+            instance.AudioThread.Start();
+            instance.StartButton.Enabled = false;
+            instance.StopButton.Enabled = true;
+            instance.DeviceComboBox.Enabled = false;
+        }
+        
+        private void StopInputRouting(InputRoutingInstance instance)
+        {
+            instance.CancellationTokenSource?.Cancel();
+            instance.AudioThread?.Join(2000);
+            instance.CancellationTokenSource?.Dispose();
+            instance.CancellationTokenSource = null;
+            instance.AudioThread = null;
+            
+            instance.StartButton.Enabled = true;
+            instance.StopButton.Enabled = false;
+            instance.DeviceComboBox.Enabled = true;
+        }
+        
+        private void StartOutputRouting(OutputRoutingInstance instance)
+        {
+            if (instance.CancellationTokenSource != null)
+                return; // Already running
+                
+            int selectedIndex = instance.DeviceComboBox.SelectedIndex;
+            if (selectedIndex < 0) return;
+            
+            instance.CancellationTokenSource = new CancellationTokenSource();
+            
+            instance.AudioThread = new Thread(() =>
+            {
+                try
+                {
+                    if (selectedIndex == 0)
+                    {
+                        // System Default Input to System Default Output
+                        AudioEngine.StartSystemInputToSystemOutputRouting(instance.CancellationTokenSource.Token);
+                    }
+                    else
+                    {
+                        // System Default Input to Selected Output Device
+                        AudioEngine.StartSystemInputToOutputDeviceRouting(selectedIndex - 1, instance.CancellationTokenSource.Token);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    BeginInvoke((Action)(() =>
+                    {
+                        string errorMessage = ex.Message;
+                        
+                        // Provide user-friendly messages for common Bluetooth issues
+                        if (ex.Message.Contains("0x8889000F") || ex.Message.Contains("disconnected"))
+                        {
+                            errorMessage = $"Bluetooth device for Output {instance.Id} was disconnected.\n\nPlease:\n1. Reconnect your Bluetooth device\n2. Click 'Refresh Devices' button\n3. Try starting the routing again";
+                        }
+                        else if (ex.Message.Contains("0x88890008") || ex.Message.Contains("in use"))
+                        {
+                            errorMessage = $"Audio device for Output {instance.Id} is being used by another application.\n\nPlease close other audio applications and try again.";
+                        }
+                        
+                        MessageBox.Show(errorMessage, "Audio Routing Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        StopOutputRouting(instance);
+                    }));
+                }
+            })
+            { IsBackground = true };
+            
+            instance.AudioThread.Start();
+            instance.StartButton.Enabled = false;
+            instance.StopButton.Enabled = true;
+            instance.DeviceComboBox.Enabled = false;
+        }
+        
+        private void StopOutputRouting(OutputRoutingInstance instance)
+        {
+            instance.CancellationTokenSource?.Cancel();
+            instance.AudioThread?.Join(2000);
+            instance.CancellationTokenSource?.Dispose();
+            instance.CancellationTokenSource = null;
+            instance.AudioThread = null;
+            
+            instance.StartButton.Enabled = true;
+            instance.StopButton.Enabled = false;
+            instance.DeviceComboBox.Enabled = true;
+        }
+        
+        private void RemoveInputRouting(InputRoutingInstance instance)
+        {
+            // Stop routing if active
+            StopInputRouting(instance);
+            
+            // Remove from panel and list
+            inputRoutingPanel.Controls.Remove(instance.Panel);
+            inputRoutingInstances.Remove(instance);
+            
+            // Reposition remaining instances
+            for (int i = 0; i < inputRoutingInstances.Count; i++)
+            {
+                inputRoutingInstances[i].Panel.Location = new Point(5, i * 45 + 5);
+            }
+        }
+        
+        private void RemoveOutputRouting(OutputRoutingInstance instance)
+        {
+            // Stop routing if active
+            StopOutputRouting(instance);
+            
+            // Remove from panel and list
+            outputRoutingPanel.Controls.Remove(instance.Panel);
+            outputRoutingInstances.Remove(instance);
+            
+            // Reposition remaining instances
+            for (int i = 0; i < outputRoutingInstances.Count; i++)
+            {
+                outputRoutingInstances[i].Panel.Location = new Point(5, i * 45 + 5);
+            }
         }
         
         private void IntensityTrackBar_ValueChanged(object sender, EventArgs e)
@@ -643,8 +1015,25 @@ namespace AudioEffectsStudio
         
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            StopInputRouting();
-            StopOutputRouting();
+            // Clean up system tray icon
+            if (notifyIcon != null)
+            {
+                notifyIcon.Visible = false;
+                notifyIcon.Dispose();
+            }
+            
+            // Stop all input routing instances
+            foreach (var instance in inputRoutingInstances)
+            {
+                StopInputRouting(instance);
+            }
+            
+            // Stop all output routing instances
+            foreach (var instance in outputRoutingInstances)
+            {
+                StopOutputRouting(instance);
+            }
+            
             base.OnFormClosing(e);
         }
         
