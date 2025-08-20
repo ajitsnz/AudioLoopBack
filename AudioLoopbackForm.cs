@@ -10,11 +10,9 @@ using NAudio.CoreAudioApi;
 
 public class AudioLoopbackForm : Form
 {
-    private Button btnMicLoop;
-    private Button btnAudioDup;
-        private Button btnSpeakerLoopback;
+    private Button btnMicStart;
+    private Button btnSpeakerStart;
     private Button btnStopAll;
-    private Button btnExit;
     private CheckBox chkDarkTheme;
     private CheckBox chkRunStartup;
     private ComboBox cmbMic;
@@ -38,13 +36,10 @@ public class AudioLoopbackForm : Form
 
     public AudioLoopbackForm()
     {
-        chkDarkTheme = new CheckBox { Text = "Dark", Left = 250, Top = 155, Width = 70, Height = 24, Checked = true, Enabled = false, Visible = false };
-        this.Controls.Add(chkDarkTheme);
-    {
-    // Removed invalid field declaration from constructor
-    this.Text = "Audio Device Router";
-        this.Width = 400;
-        this.Height = 200;
+        // Form properties
+        this.Text = "Audio Device Router";
+        this.Width = 450;
+        this.Height = 190;
         this.FormBorderStyle = FormBorderStyle.None; // borderless, non-movable
         this.DoubleBuffered = true;
     this.ShowInTaskbar = false; // behave like a tray flyout
@@ -59,7 +54,7 @@ public class AudioLoopbackForm : Form
         trayMenu.Items.Add("Exit", null, (s, e) => { allowExit = true; trayIcon.Visible = false; Application.Exit(); });
         trayIcon = new NotifyIcon()
         {
-            Text = "Audio Loopback & Duplicate",
+            Text = "Audio Routing",
             Icon = CreateTrayIcon(),
             ContextMenuStrip = trayMenu,
             Visible = true
@@ -116,32 +111,31 @@ public class AudioLoopbackForm : Form
         // Controls
     lblMic = new Label { Text = "Microphone:", Left = 16, Top = 22, Width = 90 };
     cmbMic = new ComboBox { Left = 110, Top = 18, Width = 250, DropDownStyle = ComboBoxStyle.DropDownList };
+    btnMicStart = new Button { Text = "Enable", Left = 370, Top = 18, Width = 60, Height = 28 };
     lblSpeaker = new Label { Text = "Speaker:", Left = 16, Top = 62, Width = 90 };
     cmbSpeaker = new ComboBox { Left = 110, Top = 58, Width = 250, DropDownStyle = ComboBoxStyle.DropDownList };
-    btnMicLoop = new Button { Text = "Start Mic", Left = 16, Top = 105, Width = 150, Height = 28 };
-    btnSpeakerLoopback = new Button { Text = "Start Speaker", Left = 174, Top = 105, Width = 160, Height = 28 };
-    btnStopAll = new Button { Text = "Stop", Left = 16, Top = 150, Width = 70, Height = 28 };
-    chkRunStartup = new CheckBox { Text = "Run at startup", Left = 100, Top = 155, Width = 140, Height = 24, Checked = IsStartupEnabled() };
-
-    chkDarkTheme = new CheckBox { Text = "Dark Theme", Left = 250, Top = 150, Width = 100, Height = 24, Checked = false, Enabled = true, Visible = true };
+    btnSpeakerStart = new Button { Text = "Enable", Left = 370, Top = 58, Width = 60, Height = 28 };
+    btnStopAll = new Button { Text = "Disable All", Left = 16, Top = 100, Width = 100, Height = 28 };
+    var btnRefreshDevices = new Button { Text = "Refresh Devices", Left = 130, Top = 100, Width = 120, Height = 28 };
+    chkRunStartup = new CheckBox { Text = "Run at startup", Left = 16, Top = 140, Width = 120, Height = 24, Checked = IsStartupEnabled() };
+    chkDarkTheme = new CheckBox { Text = "Dark Theme", Left = 150, Top = 140, Width = 100, Height = 24, Checked = false, Enabled = true, Visible = true };
     // Set label colors to black for visibility
     lblMic.ForeColor = Color.Black;
     lblSpeaker.ForeColor = Color.Black;
-    // Align dark theme checkbox with other controls
-    chkDarkTheme.Top = btnStopAll.Top;
-    chkDarkTheme.Left = btnStopAll.Right + 30; // add more space to avoid overlap
 
-    btnMicLoop.Click += BtnMicLoop_Click;
-    btnSpeakerLoopback.Click += BtnSpeakerLoopback_Click;
+    btnMicStart.Click += BtnMicLoop_Click;
+    btnSpeakerStart.Click += BtnSpeakerLoopback_Click;
     btnStopAll.Click += BtnStopAll_Click;
+    btnRefreshDevices.Click += BtnRefreshDevices_Click;
     chkRunStartup.CheckedChanged += (s, e) => { SetRunAtStartup(chkRunStartup.Checked); };
     this.Controls.Add(cmbMic);
     this.Controls.Add(lblMic);
+    this.Controls.Add(btnMicStart);
     this.Controls.Add(lblSpeaker);
     this.Controls.Add(cmbSpeaker);
-    this.Controls.Add(btnMicLoop);
-    this.Controls.Add(btnSpeakerLoopback);
+    this.Controls.Add(btnSpeakerStart);
     this.Controls.Add(btnStopAll);
+    this.Controls.Add(btnRefreshDevices);
     this.Controls.Add(chkRunStartup);
     this.Controls.Add(chkDarkTheme);
     chkDarkTheme.BringToFront();
@@ -164,8 +158,55 @@ public class AudioLoopbackForm : Form
             cmbSpeaker.Items.Add($"{i}: {devices[i].FriendlyName}");
         }
         if (cmbSpeaker.Items.Count > 0) cmbSpeaker.SelectedIndex = 0;
+    } // End of constructor
+
+    private void RefreshDeviceLists()
+    {
+        // Save current selections
+        string selectedMic = cmbMic.SelectedItem?.ToString() ?? "";
+        string selectedSpeaker = cmbSpeaker.SelectedItem?.ToString() ?? "";
+
+        // Clear and repopulate microphone list
+        cmbMic.Items.Clear();
+        for (int i = 0; i < WaveInEvent.DeviceCount; i++)
+        {
+            var deviceInfo = WaveInEvent.GetCapabilities(i);
+            string itemText = $"{i}: {deviceInfo.ProductName}";
+            cmbMic.Items.Add(itemText);
+            // Restore selection if device still exists
+            if (itemText == selectedMic)
+                cmbMic.SelectedIndex = i;
+        }
+        if (cmbMic.SelectedIndex < 0 && cmbMic.Items.Count > 0) cmbMic.SelectedIndex = 0;
+
+        // Clear and repopulate speaker list
+        cmbSpeaker.Items.Clear();
+        var enumerator = new MMDeviceEnumerator();
+        var devices = enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active);
+        for (int i = 0; i < devices.Count; i++)
+        {
+            string itemText = $"{i}: {devices[i].FriendlyName}";
+            cmbSpeaker.Items.Add(itemText);
+            // Restore selection if device still exists
+            if (itemText == selectedSpeaker)
+                cmbSpeaker.SelectedIndex = i;
+        }
+        if (cmbSpeaker.SelectedIndex < 0 && cmbSpeaker.Items.Count > 0) cmbSpeaker.SelectedIndex = 0;
     }
+
+    private void BtnRefreshDevices_Click(object? sender, EventArgs e)
+    {
+        try
+        {
+            RefreshDeviceLists();
+            MessageBox.Show("Device lists refreshed!", "Audio Device Router", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Failed to refresh devices: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
+
     // Theming methods
     private void ApplyTheme(bool dark)
     {
@@ -453,7 +494,7 @@ public class AudioLoopbackForm : Form
         if (micRunning)
         {
             micRunning = false;
-            btnMicLoop.Text = "Start Mic";
+            btnMicStart.Text = "Enable";
             try { micCts?.Cancel(); } catch { }
             try { micThread?.Join(500); } catch { }
             micCts?.Dispose();
@@ -463,7 +504,7 @@ public class AudioLoopbackForm : Form
         if (dupRunning)
         {
             dupRunning = false;
-            btnSpeakerLoopback.Text = "Start Speaker";
+            btnSpeakerStart.Text = "Enable";
             try { dupCts?.Cancel(); } catch { }
             try { dupThread?.Join(500); } catch { }
             dupCts?.Dispose();
@@ -477,7 +518,7 @@ public class AudioLoopbackForm : Form
         if (!micRunning)
         {
             micRunning = true;
-            btnMicLoop.Text = "Stop Mic";
+            btnMicStart.Text = "Disable";
             int micIndex = cmbMic.SelectedIndex;
             micCts?.Cancel();
             micCts?.Dispose();
@@ -488,7 +529,7 @@ public class AudioLoopbackForm : Form
         else
         {
             micRunning = false;
-            btnMicLoop.Text = "Start Mic";
+            btnMicStart.Text = "Enable";
             try { micCts?.Cancel(); } catch { }
             try { micThread?.Join(500); } catch { }
             micCts?.Dispose();
@@ -502,7 +543,7 @@ public class AudioLoopbackForm : Form
         if (!dupRunning)
         {
             dupRunning = true;
-            btnSpeakerLoopback.Text = "Stop Speaker";
+            btnSpeakerStart.Text = "Disable";
             int speakerIndex = cmbSpeaker.SelectedIndex;
             dupCts?.Cancel();
             dupCts?.Dispose();
@@ -513,7 +554,7 @@ public class AudioLoopbackForm : Form
         else
         {
             dupRunning = false;
-            btnSpeakerLoopback.Text = "Start Speaker";
+            btnSpeakerStart.Text = "Enable";
             try { dupCts?.Cancel(); } catch { }
             try { dupThread?.Join(500); } catch { }
             dupCts?.Dispose();
